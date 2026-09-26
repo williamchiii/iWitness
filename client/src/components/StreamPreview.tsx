@@ -17,7 +17,11 @@ export default function StreamPreview({ src, label }: Props) {
     const video = videoRef.current!
     if (Hls.isSupported()) {
       // Lowest rendition and a tiny buffer: a thumbnail needs one fragment.
-      const hls = new Hls({ startLevel: 0, maxBufferLength: 2, maxMaxBufferLength: 2 })
+      const hls = new Hls({ startLevel: 0, maxBufferLength: 1, maxMaxBufferLength: 1 })
+      // Lock to the lowest rendition so ABR never switches up and refetches the same moment.
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        hls.currentLevel = 0
+      })
       const onFrame = () => {
         hls.stopLoad()
         setReady(true)
