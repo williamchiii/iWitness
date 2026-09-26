@@ -47,5 +47,6 @@ jobs:
           cache: pip
           cache-dependency-path: server/requirements.txt
       - run: pip install -r requirements.txt ruff
+      - run: pip install -e .. --no-deps
       - run: ruff check .
-      - run: python -c "import main"
+      - run: python -c "import server.main"

@@ -6,29 +6,16 @@ from typing import Any
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-try:
-    from . import db
-    from .config import SERVER_ROOT, settings
-    from .api import router
-    from .incident_lifecycle_routes import router as incident_lifecycle_router
-    from .incident_playback_routes import router as incident_playback_router
-    from .incident_worker import IncidentWorker
-    from .recorder import CameraRecorder, RecorderConfig
-    from .retention import RetentionWorker
-    from .segment_tracker import SegmentTracker
-    from .supervisor import RecorderSupervisor
-except ImportError:
-    # Supports ``uvicorn main:app`` when launched from the server directory.
-    import db
-    from config import SERVER_ROOT, settings
-    from recorder import CameraRecorder, RecorderConfig
-    from api import router
-    from incident_lifecycle_routes import router as incident_lifecycle_router
-    from incident_playback_routes import router as incident_playback_router
-    from incident_worker import IncidentWorker
-    from retention import RetentionWorker
-    from segment_tracker import SegmentTracker
-    from supervisor import RecorderSupervisor
+from . import db
+from .config import SERVER_ROOT, settings
+from .api import router
+from .incident_lifecycle_routes import router as incident_lifecycle_router
+from .incident_playback_routes import router as incident_playback_router
+from .incident_worker import IncidentWorker
+from .recorder import CameraRecorder, RecorderConfig
+from .retention import RetentionWorker
+from .segment_tracker import SegmentTracker
+from .supervisor import RecorderSupervisor
 
 
 logger = logging.getLogger(__name__)

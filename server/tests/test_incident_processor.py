@@ -14,10 +14,7 @@ from typing import Any
 
 os.environ.setdefault("PLAYBACK_SIGNING_SECRET", "incident-processor-test-secret")
 
-try:
-    from server.incident_processor import IncidentProcessor
-except ModuleNotFoundError:
-    from incident_processor import IncidentProcessor
+from server.incident_processor import IncidentProcessor
 
 
 UTC = timezone.utc

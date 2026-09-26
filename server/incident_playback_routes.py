@@ -14,15 +14,9 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Query
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
-try:
-    from . import db
-    from .auth import Principal, get_current_principal
-    from .config import SERVER_ROOT, settings
-except ImportError:
-    # Supports ``uvicorn main:app`` when launched from the server directory.
-    import db
-    from auth import Principal, get_current_principal
-    from config import SERVER_ROOT, settings
+from . import db
+from .auth import Principal, get_current_principal
+from .config import SERVER_ROOT, settings
 
 
 router = APIRouter()

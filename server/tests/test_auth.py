@@ -13,24 +13,14 @@ from unittest.mock import patch
 
 from fastapi import HTTPException
 
-try:
-    from server.auth import (
-        AuthConfigurationError,
-        InvalidAccessToken,
-        Principal,
-        get_current_principal,
-        get_optional_principal,
-        verify_access_token,
-    )
-except ModuleNotFoundError:
-    from auth import (
-        AuthConfigurationError,
-        InvalidAccessToken,
-        Principal,
-        get_current_principal,
-        get_optional_principal,
-        verify_access_token,
-    )
+from server.auth import (
+    AuthConfigurationError,
+    InvalidAccessToken,
+    Principal,
+    get_current_principal,
+    get_optional_principal,
+    verify_access_token,
+)
 
 
 def _part(value: object) -> str:

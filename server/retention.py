@@ -7,11 +7,7 @@ import logging
 from pathlib import Path
 import threading
 
-try:
-    from . import db
-except ImportError:
-    # Supports ``uvicorn main:app`` when launched from the server directory.
-    import db
+from . import db
 
 
 logger = logging.getLogger(__name__)
