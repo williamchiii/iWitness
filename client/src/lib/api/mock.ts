@@ -212,7 +212,9 @@ export class MockApiClient implements ApiClient {
       incident_id: incident.id,
       video_version: incident.video_version,
       playback_url: clipUrl(incident.actual_start!, incident.actual_end!),
-      download_url: clipUrl(incident.actual_start!, incident.actual_end!),
+      // The same window as MP4 fragments, which lib/download.ts stitches into
+      // one .mp4 (the demo server won't serve a single MP4 file).
+      download_url: `${clipUrl(incident.actual_start!, incident.actual_end!)}&hls_fmp4`,
       expires_at: isoPlusSeconds(isoNow(), 300),
     }
   }

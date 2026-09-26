@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
-import type { MouseEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { api } from '../lib/api'
 import type { Incident, Playback } from '../lib/api/types'
 import { cameraNumber, cameras } from '../lib/cameras'
+import { downloadFile } from '../lib/download'
 import { formatClock, formatClockRange, formatDay, formatDuration, formatFileStamp } from '../lib/format'
 import ClipPlayer from './ClipPlayer'
 
@@ -15,8 +15,7 @@ interface Props {
 // Signed links are short-lived: refresh one this close to expiring before using it.
 const LINK_REFRESH_MARGIN_MS = 30_000
 
-// iwitness_i-95-at-sw-8th-st_2026-09-26_143304.mp4. Only a hint: for a
-// cross-origin link the server's Content-Disposition picks the name.
+// iwitness_i-95-at-sw-8th-st_2026-09-26_143304.mp4
 function downloadName(incident: Incident) {
   const camera = incident.camera_name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
   return `iwitness_${camera}_${formatFileStamp(Date.parse(incident.trigger_at))}.mp4`
@@ -36,6 +35,7 @@ export default function ClipModal({ incident, onClose }: Props) {
   const [playback, setPlayback] = useState<Playback | null>(null)
   const [playerSrc, setPlayerSrc] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [downloading, setDownloading] = useState(false)
   const [downloadError, setDownloadError] = useState<string | null>(null)
   const camera = cameras.find((c) => c.id === incident.camera_id)
 
@@ -64,22 +64,23 @@ export default function ClipModal({ incident, onClose }: Props) {
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
 
-  // The link downloads by itself while it is valid; otherwise fetch a fresh one first.
-  async function download(e: MouseEvent<HTMLAnchorElement>) {
-    if (!playback || Date.now() < Date.parse(playback.expires_at) - LINK_REFRESH_MARGIN_MS) return
-    e.preventDefault()
+  // Saves the file directly, no new tab. An expired (or nearly expired) link is
+  // swapped for a fresh one first.
+  async function download() {
+    if (!playback) return
+    setDownloading(true)
     setDownloadError(null)
     try {
-      const fresh = await api.getPlayback(incident.id, true)
-      setPlayback(fresh)
-      const link = document.createElement('a')
-      link.href = fresh.download_url
-      link.download = downloadName(incident)
-      link.target = '_blank'
-      link.rel = 'noopener'
-      link.click()
+      let link = playback
+      if (Date.now() >= Date.parse(link.expires_at) - LINK_REFRESH_MARGIN_MS) {
+        link = await api.getPlayback(incident.id, true)
+        setPlayback(link)
+      }
+      await downloadFile(link.download_url, downloadName(incident))
     } catch {
-      setDownloadError('Could not start the download. Try again.')
+      setDownloadError('Could not download the clip. Try again.')
+    } finally {
+      setDownloading(false)
     }
   }
 
@@ -110,21 +111,17 @@ export default function ClipModal({ incident, onClose }: Props) {
           </div>
           <div className="flex shrink-0 items-center gap-2">
             {playback && (
-              <a
-                href={playback.download_url}
-                download={downloadName(incident)}
-                // A new tab, so a link the server doesn't serve as an attachment
-                // opens beside the app instead of replacing it.
-                target="_blank"
-                rel="noopener"
+              <button
+                type="button"
                 onClick={download}
-                className="flex h-9 items-center gap-2 rounded-md border border-line px-3 text-sm font-medium transition-colors hover:bg-surface"
+                disabled={downloading}
+                className="flex h-9 items-center gap-2 rounded-md border border-line px-3 text-sm font-medium transition-colors hover:bg-surface disabled:opacity-60"
               >
                 <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                   <path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 20h14" />
                 </svg>
-                Download
-              </a>
+                {downloading ? 'Downloading...' : 'Download'}
+              </button>
             )}
             <button
               type="button"
