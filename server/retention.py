@@ -109,23 +109,16 @@ class RetentionWorker:
 
             deletable_ids = []
             for segment_id, file_path in rows:
-                path = self._safe_media_path(file_path)
-                if path is None:
+                if self._safe_media_path(file_path) is None:
                     logger.error("Skipping unsafe segment path %s", file_path)
                     continue
-
-                try:
-                    path.unlink(missing_ok=True)
-                except OSError:
-                    logger.exception("Could not delete segment file %s", path)
-                    continue
-
                 deletable_ids.append(segment_id)
 
             if not deletable_ids:
                 return 0
 
-            # A single batched delete instead of one round trip per file.
+            # The status guard decides which candidates are still temporary.
+            # The connection commits when this block exits successfully.
             removed_paths = connection.execute(
                 """
                 DELETE FROM segment
@@ -138,6 +131,15 @@ class RetentionWorker:
             ).fetchall()
 
         for (file_path,) in removed_paths:
+            path = self._safe_media_path(file_path)
+            if path is None:
+                logger.error("Skipping unsafe deleted segment path %s", file_path)
+                continue
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                logger.exception("Could not delete segment file %s", path)
+                continue
             logger.info("Removed expired segment %s", file_path)
 
         return len(removed_paths)
