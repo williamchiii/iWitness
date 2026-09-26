@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { createPortal } from 'react-dom'
+import { POPUP_BACKDROP, POPUP_BACKDROP_OUT, POPUP_PANEL, POPUP_PANEL_OUT } from '../lib/styles'
 
 interface Props {
   title: string
@@ -8,6 +9,8 @@ interface Props {
   // Shown on the confirm button while the action runs.
   busyLabel: string
   busy: boolean
+  // Playing its exit animation (see usePopupExit).
+  closing: boolean
   error: string | null
   onConfirm: () => void
   onCancel: () => void
@@ -15,7 +18,7 @@ interface Props {
 
 // A small "are you sure" box for actions that can't be undone, styled like the
 // sign-in box. Rendered on document.body so it sits above whatever opened it.
-export default function ConfirmDialog({ title, body, confirmLabel, busyLabel, busy, error, onConfirm, onCancel }: Props) {
+export default function ConfirmDialog({ title, body, confirmLabel, busyLabel, busy, closing, error, onConfirm, onCancel }: Props) {
   // Capture phase, so Esc closes only this box and not the popup under it.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -29,7 +32,9 @@ export default function ConfirmDialog({ title, body, confirmLabel, busyLabel, bu
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[3000] flex items-center justify-center bg-black/20 p-4 backdrop-blur-sm"
+      className={`fixed inset-0 z-[3000] flex items-center justify-center bg-black/20 p-4 backdrop-blur-sm ${POPUP_BACKDROP} ${
+        closing ? POPUP_BACKDROP_OUT : ''
+      }`}
       onClick={(e) => {
         // React events bubble through portals to the component that opened
         // this box; don't let a backdrop click also close that one.
@@ -42,7 +47,9 @@ export default function ConfirmDialog({ title, body, confirmLabel, busyLabel, bu
         aria-modal="true"
         aria-labelledby="confirm-title"
         aria-describedby="confirm-body"
-        className="w-full max-w-sm rounded-xl border border-line bg-white p-6 shadow-2xl"
+        className={`w-full max-w-sm rounded-xl border border-line bg-white p-6 shadow-2xl ${POPUP_PANEL} ${
+          closing ? POPUP_PANEL_OUT : ''
+        }`}
         onClick={(e) => e.stopPropagation()}
       >
         <h2 id="confirm-title" className="text-xl font-medium tracking-tight">

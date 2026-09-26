@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { api, ApiError } from '../lib/api'
+import { api } from '../lib/api'
 import type { Incident, Playback } from '../lib/api/types'
 import { cameraNumber, cameraPlaces } from '../lib/cameras'
-import { downloadFile } from '../lib/download'
-import { formatClock, formatClockRange, formatDay, formatDuration, formatFileStamp } from '../lib/format'
+import { downloadClip } from '../lib/clips'
+import { formatClock, formatClockRange, formatDay, formatDuration } from '../lib/format'
+import { POPUP_BACKDROP, POPUP_BACKDROP_OUT, POPUP_PANEL, POPUP_PANEL_OUT } from '../lib/styles'
+import { usePopupExit } from '../lib/usePopupExit'
+import { DownloadIcon, TrashIcon } from './ClipIcons'
 import ClipPlayer from './ClipPlayer'
-import ConfirmDialog from './ConfirmDialog'
+import DeleteClipDialog from './DeleteClipDialog'
 
 interface Props {
   incident: Incident
@@ -15,23 +18,15 @@ interface Props {
   onDeleted: (incident: Incident) => void
 }
 
-// Signed links are short-lived: refresh one this close to expiring before using it.
-const LINK_REFRESH_MARGIN_MS = 30_000
-
-// iwitness_i-95-at-sw-8th-st_2026-09-26_143304.mp4
-function downloadName(incident: Incident) {
-  const camera = incident.camera_name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
-  return `iwitness_${camera}_${formatFileStamp(Date.parse(incident.trigger_at))}.mp4`
-}
-
 function sourceLabel(incident: Incident) {
   return incident.source_type === 'replay' ? 'Replayed recording' : 'Live camera'
 }
 
 // One saved clip: player plus the details the brief asks for. Playback is only
-// requested here, when a clip is opened, never for the whole list. Rendered on
-// document.body: the Library's frosted panel (backdrop-filter) would otherwise
-// become the containing block for this fixed overlay and trap it inside the panel.
+// requested when a clip is opened or downloaded, never for the whole list.
+// Rendered on document.body: the Library's frosted panel (backdrop-filter) would
+// otherwise become the containing block for this fixed overlay and trap it
+// inside the panel.
 export default function ClipModal({ incident, onClose, onDeleted }: Props) {
   // Newest playback links, used by Download. The player keeps the first URL it
   // got, so refreshing an expired link never restarts the video being watched.
@@ -41,12 +36,17 @@ export default function ClipModal({ incident, onClose, onDeleted }: Props) {
   const [downloading, setDownloading] = useState(false)
   const [downloadError, setDownloadError] = useState<string | null>(null)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
-  const [deleting, setDeleting] = useState(false)
-  const [deleteError, setDeleteError] = useState<string | null>(null)
-  const cancelDelete = useCallback(() => {
-    setConfirmingDelete(false)
-    setDeleteError(null)
-  }, [])
+  const cancelDelete = useCallback(() => setConfirmingDelete(false), [])
+  const { closing, close } = usePopupExit()
+  const requestClose = useCallback(() => close(onClose), [close, onClose])
+  // The delete box has already animated out; remove it, then this popup follows.
+  const closeDeleted = useCallback(
+    (deleted: Incident) => {
+      setConfirmingDelete(false)
+      close(() => onDeleted(deleted))
+    },
+    [close, onDeleted],
+  )
   const camera = cameraPlaces.find((c) => c.id === incident.camera_id)
 
   useEffect(() => {
@@ -68,46 +68,23 @@ export default function ClipModal({ incident, onClose, onDeleted }: Props) {
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') onClose()
+      if (e.key === 'Escape') requestClose()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
+  }, [requestClose])
 
-  // Saves the file directly, no new tab. An expired (or nearly expired) link is
-  // swapped for a fresh one first.
   async function download() {
     if (!playback) return
     setDownloading(true)
     setDownloadError(null)
     try {
-      let link = playback
-      if (Date.now() >= Date.parse(link.expires_at) - LINK_REFRESH_MARGIN_MS) {
-        link = await api.getPlayback(incident.id, true)
-        setPlayback(link)
-      }
-      await downloadFile(link.download_url, downloadName(incident))
+      setPlayback(await downloadClip(incident, playback))
     } catch {
       setDownloadError('Could not download the clip. Try again.')
     } finally {
       setDownloading(false)
     }
-  }
-
-  async function remove() {
-    setDeleting(true)
-    setDeleteError(null)
-    try {
-      await api.deleteIncident(incident.id, true)
-    } catch (e) {
-      // 404: already deleted (another tab, or it expired). Either way it's gone.
-      if (!(e instanceof ApiError && e.status === 404)) {
-        setDeleteError('Could not delete the clip. Try again.')
-        setDeleting(false)
-        return
-      }
-    }
-    onDeleted(incident)
   }
 
   const start = Date.parse(incident.actual_start!)
@@ -116,14 +93,18 @@ export default function ClipModal({ incident, onClose, onDeleted }: Props) {
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[2000] flex items-center justify-center bg-black/10 p-4 backdrop-blur-[2px]"
-      onClick={onClose}
+      className={`fixed inset-0 z-[2000] flex items-center justify-center bg-black/10 p-4 backdrop-blur-[2px] ${POPUP_BACKDROP} ${
+        closing ? POPUP_BACKDROP_OUT : ''
+      }`}
+      onClick={requestClose}
     >
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby="clip-title"
-        className="max-h-full w-full max-w-3xl overflow-y-auto rounded-xl border border-line bg-white pb-6 shadow-2xl"
+        className={`max-h-full w-full max-w-3xl overflow-y-auto rounded-xl border border-line bg-white pb-6 shadow-2xl ${POPUP_PANEL} ${
+          closing ? POPUP_PANEL_OUT : ''
+        }`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-4 px-6 pb-4 pt-5">
@@ -143,9 +124,7 @@ export default function ClipModal({ incident, onClose, onDeleted }: Props) {
                 disabled={downloading}
                 className="flex h-9 items-center gap-2 rounded-md border border-line px-3 text-sm font-medium transition-colors hover:bg-surface disabled:opacity-60"
               >
-                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 20h14" />
-                </svg>
+                <DownloadIcon />
                 {downloading ? 'Downloading...' : 'Download'}
               </button>
             )}
@@ -154,15 +133,13 @@ export default function ClipModal({ incident, onClose, onDeleted }: Props) {
               onClick={() => setConfirmingDelete(true)}
               className="flex h-9 items-center gap-2 rounded-md border border-line px-3 text-sm font-medium transition-colors hover:border-rec/40 hover:text-rec"
             >
-              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M4 7h16M10 11v6m4-6v6M6 7l1 12a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-12M9 7V4h6v3" />
-              </svg>
+              <TrashIcon />
               Delete
             </button>
             <button
               type="button"
               aria-label="Close"
-              onClick={onClose}
+              onClick={requestClose}
               className="grid size-9 shrink-0 place-items-center rounded-md border border-line text-muted transition-colors hover:text-ink"
             >
               <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
@@ -209,18 +186,7 @@ export default function ClipModal({ incident, onClose, onDeleted }: Props) {
           This camera may not show your vehicle. Footage gives context, not proof of fault.
         </p>
       </div>
-      {confirmingDelete && (
-        <ConfirmDialog
-          title="Delete this clip?"
-          body="The video is removed from your Library for good. You can't undo this."
-          confirmLabel="Delete clip"
-          busyLabel="Deleting..."
-          busy={deleting}
-          error={deleteError}
-          onConfirm={remove}
-          onCancel={cancelDelete}
-        />
-      )}
+      {confirmingDelete && <DeleteClipDialog incident={incident} onCancel={cancelDelete} onDeleted={closeDeleted} />}
     </div>,
     document.body,
   )
