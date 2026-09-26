@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import CameraList from '../components/CameraList'
 import CameraMap from '../components/CameraMap'
 import CameraModal from '../components/CameraModal'
@@ -35,7 +36,7 @@ export default function HomePage() {
         tone: 'success',
         title: 'Saved to your Library',
         body: `Recording from ${formatClockRange(Date.parse(incident.requested_start), Date.parse(incident.requested_end))}.`,
-        link: { href: '/saved', label: 'View' },
+        link: { to: '/saved', label: 'View' },
       }),
     [showToast],
   )
@@ -62,10 +63,12 @@ export default function HomePage() {
     <div className="relative h-full">
       <Header
         user={user}
-        query={query}
-        onQueryChange={setQuery}
-        onSearchSubmit={() => {
-          if (matches.length) setSelectedId(matches[0].id)
+        search={{
+          query,
+          onQueryChange: setQuery,
+          onSubmit: () => {
+            if (matches.length) setSelectedId(matches[0].id)
+          },
         }}
         onLogIn={() => setShowSignIn(true)}
         onLogOut={() => signOut().catch(() => showToast({ title: 'Could not log out.', body: 'Check your connection and try again.' }))}
@@ -76,10 +79,9 @@ export default function HomePage() {
           <div className="flex items-center justify-between gap-4">
             <h1 className="text-3xl font-medium tracking-tight">Cameras</h1>
             {user && (
-              // The Library page itself is built on its own branch.
-              <a href="/saved" className={OUTLINE_PILL}>
+              <Link to="/saved" className={OUTLINE_PILL}>
                 Library
-              </a>
+              </Link>
             )}
           </div>
           <div className="mt-6">

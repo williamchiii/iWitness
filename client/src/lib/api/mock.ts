@@ -14,6 +14,10 @@ import type { BufferInfo, Camera, Incident, Playback, StartTripResponse, Trip, U
 export const CLIP_BEFORE_SECONDS = 60
 export const CLIP_AFTER_SECONDS = 15
 const CLAIM_WINDOW_SECONDS = 15 * 60
+// After the post-trigger window closes, how long "assembling" takes before the clip is ready.
+const ASSEMBLE_SECONDS = 3
+// About the recorder's 1 Mbps, for a plausible file size.
+const BYTES_PER_SECOND = 125_000
 
 const MOCK_USER: User = {
   id: 'mock-user-1',
@@ -24,6 +28,14 @@ const MOCK_USER: User = {
 
 // Stands in for the camera's own loop buffer until a real one exists.
 const SAMPLE_STREAM_URL = 'https://demo.unified-streaming.com/k8s/live/stable/live.isml/.m3u8'
+
+// A closed clip of just this window, cut from the sample stream's ~10 minute
+// archive (Unified Streaming virtual subclip), so a saved clip really shows the
+// moments around the press, clock and all. Clips older than that archive stop playing.
+function clipUrl(startIso: string, endIso: string) {
+  const seconds = (iso: string) => iso.replace(/\.\d{3}Z$/, 'Z')
+  return `${SAMPLE_STREAM_URL}?vbegin=${seconds(startIso)}&vend=${seconds(endIso)}`
+}
 
 function delay(ms = 250) {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -151,20 +163,16 @@ export class MockApiClient implements ApiClient {
       throw new ApiError(403, 'Invalid trip token')
     }
 
-    const claimed: Incident = {
-      ...incident,
-      claim_state: 'claimed',
-      expires_at: null,
-      processing_state: 'ready',
-    }
+    const claimed: Incident = { ...incident, claim_state: 'claimed', expires_at: null }
     this.incidents.set(incidentId, claimed)
-    return claimed
+    return this.advance(claimed)
   }
 
   async listIncidents(signedIn: boolean): Promise<Incident[]> {
     await delay()
     this.requireSignedIn(signedIn)
     return [...this.incidents.values()]
+      .map((incident) => this.advance(incident))
       .filter((incident) => incident.claim_state === 'claimed')
       .sort((a, b) => Date.parse(b.trigger_at) - Date.parse(a.trigger_at))
   }
@@ -185,8 +193,8 @@ export class MockApiClient implements ApiClient {
     return {
       incident_id: incident.id,
       video_version: incident.video_version,
-      playback_url: SAMPLE_STREAM_URL,
-      download_url: SAMPLE_STREAM_URL,
+      playback_url: clipUrl(incident.actual_start!, incident.actual_end!),
+      download_url: clipUrl(incident.actual_start!, incident.actual_end!),
       expires_at: isoPlusSeconds(isoNow(), 300),
     }
   }
@@ -213,7 +221,35 @@ export class MockApiClient implements ApiClient {
   private requireIncident(incidentId: string): Incident {
     const incident = this.incidents.get(incidentId)
     if (!incident) throw new ApiError(404, 'Incident not found')
-    return incident
+    return this.advance(incident)
+  }
+
+  // Processing moves recording -> assembling -> ready on a short timer, as the
+  // contract's mock describes. Worked out from the clock on each read, so there
+  // are no timers to clean up. The real backend reports the segment-aligned
+  // actual window; here it simply equals the requested one.
+  private advance(incident: Incident): Incident {
+    if (incident.processing_state === 'ready' || incident.processing_state === 'failed') return incident
+    const recordedUntil = Date.parse(incident.requested_end)
+    const now = Date.now()
+    let next: Incident
+    if (now < recordedUntil) {
+      next = { ...incident, processing_state: 'recording' }
+    } else if (now < recordedUntil + ASSEMBLE_SECONDS * 1000) {
+      next = { ...incident, processing_state: 'assembling' }
+    } else {
+      const duration = (recordedUntil - Date.parse(incident.requested_start)) / 1000
+      next = {
+        ...incident,
+        processing_state: 'ready',
+        actual_start: incident.requested_start,
+        actual_end: incident.requested_end,
+        duration_seconds: duration,
+        size_bytes: Math.round(duration * BYTES_PER_SECOND),
+      }
+    }
+    this.incidents.set(incident.id, next)
+    return next
   }
 
   // Only a claimed incident is "owned" by the signed-in account in this

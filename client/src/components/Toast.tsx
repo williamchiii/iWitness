@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 
 export interface ToastMessage {
   // New id per message, so a repeated message restarts its timer.
@@ -6,7 +7,7 @@ export interface ToastMessage {
   title: string
   body?: string
   tone?: 'success' | 'info'
-  link?: { href: string; label: string }
+  link?: { to: string; label: string }
 }
 
 const VISIBLE_MS = 6000
@@ -49,9 +50,9 @@ export default function Toast({ toast, onDismiss }: { toast: ToastMessage; onDis
         {toast.body && <p className="mt-0.5 text-muted">{toast.body}</p>}
       </div>
       {toast.link && (
-        <a href={toast.link.href} className="shrink-0 font-medium underline-offset-4 hover:underline">
+        <Link to={toast.link.to} className="shrink-0 font-medium underline-offset-4 hover:underline">
           {toast.link.label}
-        </a>
+        </Link>
       )}
       <button
         type="button"

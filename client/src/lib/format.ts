@@ -12,6 +12,11 @@ export function formatClock(ms: number) {
   })
 }
 
+// "Sep 26", in Miami's zone like the clock times.
+export function formatDay(ms: number) {
+  return new Date(ms).toLocaleDateString('en-US', { timeZone: CAMERA_TIME_ZONE, month: 'short', day: 'numeric' })
+}
+
 // "7:54:40 to 7:55:55 AM EDT", naming AM/PM and the zone once when both ends share them.
 export function formatClockRange(startMs: number, endMs: number) {
   const start = formatClock(startMs)

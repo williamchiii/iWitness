@@ -10,6 +10,8 @@ interface Props {
   onSeek: (time: number) => void
   // Label for a point on the timeline, shown while hovering or dragging.
   describe: (time: number) => string
+  // Moments ticked on the bar, like when save was pressed.
+  marks?: { time: number; label: string }[]
 }
 
 const KEY_STEP_SECONDS = 5
@@ -17,7 +19,7 @@ const KEY_STEP_SECONDS = 5
 // YouTube-style timeline: a thin bar that thickens on hover, a dot that shows
 // while hovering or dragging, and a time label above the pointer. Dragging
 // only moves the playhead on screen; the video seeks once, on release.
-export default function Scrubber({ start, end, current, buffered, onSeek, describe }: Props) {
+export default function Scrubber({ start, end, current, buffered, onSeek, describe, marks = [] }: Props) {
   const [hoverTime, setHoverTime] = useState<number | null>(null)
   const [dragTime, setDragTime] = useState<number | null>(null)
 
@@ -96,6 +98,14 @@ export default function Scrubber({ start, end, current, buffered, onSeek, descri
       >
         <div className="absolute inset-y-0 left-0 rounded-full bg-ink/20" style={{ width: percent(buffered) }} />
         <div className="absolute inset-y-0 left-0 rounded-full bg-rec" style={{ width: percent(position) }} />
+        {marks.map((mark) => (
+          <div
+            key={mark.label}
+            title={mark.label}
+            className="absolute top-1/2 h-3 w-0.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-ink"
+            style={{ left: percent(mark.time) }}
+          />
+        ))}
         <div
           className={`absolute top-1/2 size-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-rec ring-2 ring-white transition-transform duration-150 group-hover:scale-100 group-focus-visible:scale-100 ${
             dragging ? 'scale-100' : 'scale-0'
