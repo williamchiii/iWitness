@@ -86,16 +86,18 @@ class ExceptionHandlerTests(unittest.TestCase):
         self.assertNotIn(secret, str(log_error.call_args))
 
     def test_http_exception_keeps_status_detail_and_default_handler(self) -> None:
-        status, _, body = _request(
-            "POST",
-            "/trips/11111111-1111-1111-1111-111111111111/end"
-        )
+        with patch.dict(main.app.dependency_overrides, {main.db.get_db: object}):
+            status, _, body = _request(
+                "POST",
+                "/trips/11111111-1111-1111-1111-111111111111/end"
+            )
 
         self.assertEqual(status, 403)
         self.assertEqual(json.loads(body), {"detail": "Trip token required"})
 
     def test_validation_uses_contract_error_envelope(self) -> None:
-        status, _, body = _request("POST", "/trips/not-a-uuid/end")
+        with patch.dict(main.app.dependency_overrides, {main.db.get_db: object}):
+            status, _, body = _request("POST", "/trips/not-a-uuid/end")
 
         self.assertEqual(status, 400)
         self.assertEqual(json.loads(body), {"detail": "Malformed request"})
