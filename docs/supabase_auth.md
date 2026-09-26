@@ -45,9 +45,8 @@ SUPABASE_JWT_AUDIENCE=authenticated
 
 The default endpoint is
 `{SUPABASE_URL}/auth/v1/.well-known/jwks.json`, and the default issuer is
-`{SUPABASE_URL}/auth/v1`. The JWKS path requires `PyJWT[crypto]` in the
-backend environment. The current dependency list does not include that
-optional package, so install it before selecting JWKS verification. The
+`{SUPABASE_URL}/auth/v1`. The JWKS path uses `PyJWT[crypto]`, which is
+included in `server/requirements.txt`. The
 helper accepts `RS256`, `ES256`, and `EdDSA` by default; override them with
 `SUPABASE_JWT_ALGORITHMS` only when the Supabase project is configured with a
 different supported signing algorithm.

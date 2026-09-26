@@ -246,10 +246,11 @@ class IncidentProcessor:
             latest = connection.execute(
                 """
                 SELECT max(actual_end)
-                FROM segment
-                WHERE incident_id = %s
-                  AND camera_id = %s
-                  AND status = 'preserved'
+                FROM segment AS s
+                JOIN incident_segment AS link ON link.segment_id = s.id
+                WHERE link.incident_id = %s
+                  AND s.camera_id = %s
+                  AND s.status = 'preserved'
                 """,
                 (incident_id, incident.camera_id),
             ).fetchone()
@@ -310,11 +311,12 @@ class IncidentProcessor:
             rows = connection.execute(
                 """
                 SELECT file_path, actual_start, actual_end
-                FROM segment
-                WHERE incident_id = %s
-                  AND camera_id = %s
-                  AND status = 'preserved'
-                ORDER BY actual_start ASC, actual_end ASC, id ASC
+                FROM segment AS s
+                JOIN incident_segment AS link ON link.segment_id = s.id
+                WHERE link.incident_id = %s
+                  AND s.camera_id = %s
+                  AND s.status = 'preserved'
+                ORDER BY s.actual_start ASC, s.actual_end ASC, s.id ASC
                 """,
                 (incident_id, camera_id),
             ).fetchall()

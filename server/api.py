@@ -12,11 +12,12 @@ import time
 from urllib.parse import urlencode
 from uuid import UUID
 
-from fastapi import APIRouter, Header, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import FileResponse, PlainTextResponse
 
 try:
     from . import db
+    from .auth import Principal, get_optional_principal
     from .config import SERVER_ROOT, settings
     from .schemas import (
         BufferInfoResponse,
@@ -29,6 +30,7 @@ try:
 except ImportError:
     # Supports ``uvicorn main:app`` when launched from the server directory.
     import db
+    from auth import Principal, get_optional_principal
     from config import SERVER_ROOT, settings
     from schemas import (
         BufferInfoResponse,
@@ -280,19 +282,42 @@ def get_buffer(
 def create_incident(
     trip_id: UUID,
     x_trip_token: str | None = Header(default=None, alias="X-Trip-Token"),
+    principal: Principal | None = Depends(get_optional_principal),
 ) -> IncidentResponse:
-    """Create an unclaimed incident and preserve its pre-trigger segments."""
+    """Create an incident and preserve footage already in its time window."""
 
     if not x_trip_token:
         raise HTTPException(status_code=403, detail="Trip token required")
 
     trip = _load_trip(trip_id, x_trip_token)
+    user_id: UUID | None = None
+    if principal is not None:
+        try:
+            user_id = UUID(principal.id)
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(status_code=401, detail="Authenticated user id is invalid") from exc
+        if not principal.email:
+            raise HTTPException(status_code=401, detail="Authenticated user email is missing")
+
     with db.connect() as connection:
+        if principal is not None:
+            connection.execute(
+                """
+                INSERT INTO app_user (id, email, display_name, avatar_url)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (id) DO UPDATE SET
+                    email = EXCLUDED.email,
+                    display_name = COALESCE(EXCLUDED.display_name, app_user.display_name),
+                    avatar_url = COALESCE(EXCLUDED.avatar_url, app_user.avatar_url)
+                """,
+                (user_id, principal.email, principal.display_name, principal.avatar_url),
+            )
         incident_id = connection.execute(
             """
             INSERT INTO incident (
                 trip_id,
                 camera_id,
+                user_id,
                 trigger_at,
                 requested_start,
                 requested_end,
@@ -303,27 +328,29 @@ def create_incident(
             VALUES (
                 %s,
                 %s,
+                %s,
                 now(),
                 now() - (%s * interval '1 second'),
                 now() + (%s * interval '1 second'),
                 'recording',
-                'unclaimed',
-                now() + (%s * interval '1 second')
+                CASE WHEN %s::uuid IS NULL THEN 'unclaimed' ELSE 'claimed' END,
+                CASE WHEN %s::uuid IS NULL THEN now() + (%s * interval '1 second') ELSE NULL END
             )
             RETURNING id
             """,
             (
                 trip_id,
                 trip.camera_id,
+                user_id,
                 settings.pre_trigger_seconds,
                 settings.post_trigger_seconds,
+                user_id,
+                user_id,
                 settings.unclaimed_incident_seconds,
             ),
         ).fetchone()[0]
 
-        # Preserve only temporary rows. A segment already assigned to an
-        # earlier incident must remain owned by that incident because the
-        # schema stores one incident_id per segment.
+        # Keep newly selected files out of loop retention.
         connection.execute(
             """
             UPDATE segment AS s
@@ -338,6 +365,22 @@ def create_incident(
               )
             """,
             (incident_id, trip.camera_id, incident_id, incident_id),
+        )
+        # Associate already-preserved files too: separate incidents on the
+        # same camera may need the same pre-trigger footage.
+        connection.execute(
+            """
+            INSERT INTO incident_segment (incident_id, segment_id)
+            SELECT %s, s.id
+            FROM segment AS s
+            JOIN incident AS i ON i.id = %s
+            WHERE s.camera_id = i.camera_id
+              AND s.status = 'preserved'
+              AND s.actual_start < i.trigger_at
+              AND s.actual_end > i.requested_start
+            ON CONFLICT DO NOTHING
+            """,
+            (incident_id, incident_id),
         )
 
         row = connection.execute(_INCIDENT_SELECT, (incident_id,)).fetchone()

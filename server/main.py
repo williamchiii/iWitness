@@ -9,6 +9,7 @@ try:
     from . import db
     from .config import SERVER_ROOT, settings
     from .api import router
+    from .incident_worker import IncidentWorker
     from .recorder import CameraRecorder, RecorderConfig
     from .retention import RetentionWorker
     from .segment_tracker import SegmentTracker
@@ -19,6 +20,7 @@ except ImportError:
     from config import SERVER_ROOT, settings
     from recorder import CameraRecorder, RecorderConfig
     from api import router
+    from incident_worker import IncidentWorker
     from retention import RetentionWorker
     from segment_tracker import SegmentTracker
     from supervisor import RecorderSupervisor
@@ -83,6 +85,7 @@ async def lifespan(_: FastAPI):
     trackers: dict[str, SegmentTracker] = {}
     retention_workers: dict[str, RetentionWorker] = {}
     supervisors: dict[str, RecorderSupervisor] = {}
+    incident_worker = IncidentWorker()
     try:
         for camera in _permitted_cameras():
             camera_id = camera["id"]
@@ -142,8 +145,10 @@ async def lifespan(_: FastAPI):
             _set_recording(camera_id, True)
             logger.info("Started recorder for camera %s", camera_id)
 
+        incident_worker.start()
         yield
     finally:
+        incident_worker.stop()
         for supervisor in supervisors.values():
             supervisor.stop()
         for retention_worker in retention_workers.values():
