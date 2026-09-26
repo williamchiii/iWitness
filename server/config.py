@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 import os
 from pathlib import Path
-import secrets
 
 from dotenv import load_dotenv
 
@@ -25,6 +24,13 @@ def _positive_int(name: str, default: int) -> int:
     return parsed
 
 
+def _required_str(name: str) -> str:
+    value = os.getenv(name)
+    if not value:
+        raise RuntimeError(f"{name} must be set")
+    return value
+
+
 def _path_from_env(name: str, default: str) -> Path:
     configured = Path(os.getenv(name, default))
     if configured.is_absolute():
@@ -40,6 +46,7 @@ class Settings:
     media_root: Path
     ffmpeg_binary: str
     playback_signing_secret: str
+    playback_url_seconds: int
     segment_seconds: int
     buffer_seconds: int
     pre_trigger_seconds: int
@@ -52,10 +59,11 @@ class Settings:
             database_url=os.getenv("DATABASE_URL"),
             media_root=_path_from_env("MEDIA_ROOT", "media"),
             ffmpeg_binary=os.getenv("FFMPEG_BINARY", "ffmpeg"),
-            playback_signing_secret=os.getenv(
-                "PLAYBACK_SIGNING_SECRET",
-                secrets.token_urlsafe(32),
-            ),
+            # Every process restart must reuse the same secret, or every
+            # playback URL already handed out becomes invalid with no
+            # warning. There is no safe default, so this is required.
+            playback_signing_secret=_required_str("PLAYBACK_SIGNING_SECRET"),
+            playback_url_seconds=_positive_int("PLAYBACK_URL_SECONDS", 300),
             segment_seconds=_positive_int("SEGMENT_SECONDS", 10),
             buffer_seconds=_positive_int("BUFFER_SECONDS", 300),
             pre_trigger_seconds=_positive_int("PRE_TRIGGER_SECONDS", 60),
