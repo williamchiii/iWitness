@@ -49,6 +49,17 @@ function isoPlusSeconds(iso: string, seconds: number): string {
   return new Date(new Date(iso).getTime() + seconds * 1000).toISOString()
 }
 
+// Saved incidents (and the trip tokens that can claim them) are kept in
+// localStorage, standing in for the backend's database: the Library then
+// survives a reload, and a claim still works after the Google sign-in
+// redirect. Trips stay in memory; a camera starts a new one when opened.
+const STORAGE_KEY = 'iwitness.mockIncidents'
+
+interface StoredIncidents {
+  incidents: Incident[]
+  tripTokens: [string, string][]
+}
+
 interface StoredTrip {
   trip: Trip
   tripToken: string
@@ -58,6 +69,10 @@ export class MockApiClient implements ApiClient {
   private trips = new Map<string, StoredTrip>()
   private incidents = new Map<string, Incident>()
   private incidentTripTokens = new Map<string, string>()
+
+  constructor() {
+    this.load()
+  }
 
   async listCameras(): Promise<Camera[]> {
     await delay()
@@ -137,6 +152,7 @@ export class MockApiClient implements ApiClient {
 
     this.incidents.set(incident.id, incident)
     this.incidentTripTokens.set(incident.id, tripToken)
+    this.persist()
     return incident
   }
 
@@ -157,6 +173,7 @@ export class MockApiClient implements ApiClient {
     if (incident.claim_state === 'expired' || (incident.expires_at && Date.now() >= Date.parse(incident.expires_at))) {
       const expired: Incident = { ...incident, claim_state: 'expired' }
       this.incidents.set(incidentId, expired)
+      this.persist()
       throw new ApiError(410, 'Incident expired before it was claimed')
     }
     if (this.incidentTripTokens.get(incidentId) !== tripToken) {
@@ -165,6 +182,7 @@ export class MockApiClient implements ApiClient {
 
     const claimed: Incident = { ...incident, claim_state: 'claimed', expires_at: null }
     this.incidents.set(incidentId, claimed)
+    this.persist()
     return this.advance(claimed)
   }
 
@@ -205,6 +223,7 @@ export class MockApiClient implements ApiClient {
     this.requireOwnedIncident(incidentId)
     this.incidents.delete(incidentId)
     this.incidentTripTokens.delete(incidentId)
+    this.persist()
   }
 
   private requireSignedIn(signedIn: boolean): void {
@@ -249,7 +268,32 @@ export class MockApiClient implements ApiClient {
       }
     }
     this.incidents.set(incident.id, next)
+    this.persist()
     return next
+  }
+
+  private load(): void {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY)
+      if (!raw) return
+      const stored = JSON.parse(raw) as StoredIncidents
+      for (const incident of stored.incidents) this.incidents.set(incident.id, incident)
+      for (const [id, token] of stored.tripTokens) this.incidentTripTokens.set(id, token)
+    } catch {
+      // Unreadable or blocked storage: start empty, like a fresh backend.
+    }
+  }
+
+  private persist(): void {
+    try {
+      const stored: StoredIncidents = {
+        incidents: [...this.incidents.values()],
+        tripTokens: [...this.incidentTripTokens],
+      }
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(stored))
+    } catch {
+      // Storage blocked: incidents last until the page is reloaded.
+    }
   }
 
   // Only a claimed incident is "owned" by the signed-in account in this
