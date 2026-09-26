@@ -10,6 +10,8 @@ import time
 from urllib.parse import urlencode
 from uuid import UUID
 
+import psycopg
+
 from fastapi import APIRouter, Depends, HTTPException, Request, Query
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
@@ -17,12 +19,12 @@ from pydantic import BaseModel
 try:
     from . import db
     from .auth import Principal, get_current_principal
-    from .config import SERVER_ROOT, settings
+    from .config import SERVER_ROOT, Settings, get_settings
 except ImportError:
     # Supports ``uvicorn main:app`` when launched from the server directory.
     import db
     from auth import Principal, get_current_principal
-    from config import SERVER_ROOT, settings
+    from config import SERVER_ROOT, Settings, get_settings
 
 
 router = APIRouter()
@@ -38,7 +40,7 @@ class PlaybackResponse(BaseModel):
     expires_at: datetime
 
 
-def _signature(payload: str, expires: int) -> str:
+def _signature(payload: str, expires: int, settings: Settings) -> str:
     """Sign a playback URL payload with the configured server secret."""
 
     message = f"{payload}|{expires}".encode("utf-8")
@@ -49,17 +51,17 @@ def _signature(payload: str, expires: int) -> str:
     ).hexdigest()
 
 
-def _verify_signature(payload: str, expires: int, signature: str) -> None:
+def _verify_signature(payload: str, expires: int, signature: str, settings: Settings) -> None:
     """Reject expired or forged local playback URLs."""
 
     if expires <= int(time.time()):
         raise HTTPException(status_code=403, detail="Playback URL expired")
-    expected = _signature(payload, expires)
+    expected = _signature(payload, expires, settings)
     if not hmac.compare_digest(expected, signature):
         raise HTTPException(status_code=403, detail="Invalid playback signature")
 
 
-def _incident_directory(incident_id: UUID) -> Path:
+def _incident_directory(incident_id: UUID, settings: Settings) -> Path:
     """Return the incident's validated local media directory."""
 
     root = settings.incidents_root.resolve()
@@ -74,6 +76,7 @@ def _incident_directory(incident_id: UUID) -> Path:
 def _safe_clip_path(
     incident_id: UUID,
     storage_path: str | None,
+    settings: Settings,
     *,
     require_file: bool,
 ) -> Path | None:
@@ -84,7 +87,7 @@ def _safe_clip_path(
             raise HTTPException(status_code=404, detail="Incident clip not found")
         return None
 
-    directory = _incident_directory(incident_id)
+    directory = _incident_directory(incident_id, settings)
     configured = Path(storage_path)
     candidate = (
         configured if configured.is_absolute() else SERVER_ROOT / configured
@@ -112,6 +115,7 @@ def _signed_clip_url(
     incident_id: UUID,
     user_id: str,
     expires: int,
+    settings: Settings,
     *,
     download: bool,
 ) -> str:
@@ -121,6 +125,7 @@ def _signed_clip_url(
     signature = _signature(
         f"incident|{incident_id}|{user_id}|{action}",
         expires,
+        settings,
     )
     query = urlencode(
         {
@@ -142,18 +147,19 @@ def get_incident_playback(
     incident_id: UUID,
     request: Request,
     principal: Principal = Depends(get_current_principal),
+    connection: psycopg.Connection = Depends(db.get_db),
+    settings: Settings = Depends(get_settings),
 ) -> PlaybackResponse:
     """Issue signed playback and download URLs for an owned ready clip."""
 
-    with db.connect() as connection:
-        row = connection.execute(
-            """
-            SELECT storage_path, processing_state, video_version
-            FROM incident
-            WHERE id = %s AND user_id = %s
-            """,
-            (incident_id, principal.id),
-        ).fetchone()
+    row = connection.execute(
+        """
+        SELECT storage_path, processing_state, video_version
+        FROM incident
+        WHERE id = %s AND user_id = %s
+        """,
+        (incident_id, principal.id),
+    ).fetchone()
 
     if row is None:
         # Ownership failures are intentionally indistinguishable from a
@@ -165,7 +171,7 @@ def get_incident_playback(
             detail="Incident clip is not ready for playback",
         )
 
-    _safe_clip_path(incident_id, row[0], require_file=True)
+    _safe_clip_path(incident_id, row[0], settings, require_file=True)
     expires = int(time.time()) + settings.playback_url_seconds
     return PlaybackResponse(
         incident_id=str(incident_id),
@@ -175,6 +181,7 @@ def get_incident_playback(
             incident_id,
             principal.id,
             expires,
+            settings,
             download=False,
         ),
         download_url=_signed_clip_url(
@@ -182,6 +189,7 @@ def get_incident_playback(
             incident_id,
             principal.id,
             expires,
+            settings,
             download=True,
         ),
         expires_at=datetime.fromtimestamp(expires, tz=timezone.utc),
@@ -195,28 +203,29 @@ def serve_incident_clip(
     exp: int = Query(...),
     sig: str = Query(...),
     download: bool = Query(default=False),
+    connection: psycopg.Connection = Depends(db.get_db),
+    settings: Settings = Depends(get_settings),
 ) -> FileResponse:
     """Serve a ready local clip after verifying its short-lived signature."""
 
     action = "download" if download else "playback"
-    _verify_signature(f"incident|{incident_id}|{uid}|{action}", exp, sig)
+    _verify_signature(f"incident|{incident_id}|{uid}|{action}", exp, sig, settings)
 
-    with db.connect() as connection:
-        row = connection.execute(
-            """
-            SELECT storage_path, user_id, processing_state
-            FROM incident
-            WHERE id = %s
-            """,
-            (incident_id,),
-        ).fetchone()
+    row = connection.execute(
+        """
+        SELECT storage_path, user_id, processing_state
+        FROM incident
+        WHERE id = %s
+        """,
+        (incident_id,),
+    ).fetchone()
 
     if row is None or row[1] is None or str(row[1]) != uid:
         raise HTTPException(status_code=404, detail="Incident not found")
     if row[2] != "ready":
         raise HTTPException(status_code=409, detail="Incident clip is not ready")
 
-    path = _safe_clip_path(incident_id, row[0], require_file=True)
+    path = _safe_clip_path(incident_id, row[0], settings, require_file=True)
     assert path is not None
     headers = {"Cache-Control": "private, max-age=300"}
     if download:
@@ -230,69 +239,70 @@ def serve_incident_clip(
 def delete_incident(
     incident_id: UUID,
     principal: Principal = Depends(get_current_principal),
+    connection: psycopg.Connection = Depends(db.get_db),
+    settings: Settings = Depends(get_settings),
 ) -> Response:
     """Delete an owned incident and its local clip."""
 
-    with db.connect() as connection:
-        row = connection.execute(
-            """
-            SELECT storage_path, processing_state
-            FROM incident
-            WHERE id = %s AND user_id = %s
-            FOR UPDATE
-            """,
-            (incident_id, principal.id),
-        ).fetchone()
-        if row is None:
-            raise HTTPException(status_code=404, detail="Incident not found")
-        if row[1] == "assembling":
-            raise HTTPException(status_code=409, detail="Incident clip is being assembled")
+    row = connection.execute(
+        """
+        SELECT storage_path, processing_state
+        FROM incident
+        WHERE id = %s AND user_id = %s
+        FOR UPDATE
+        """,
+        (incident_id, principal.id),
+    ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    if row[1] == "assembling":
+        raise HTTPException(status_code=409, detail="Incident clip is being assembled")
 
-        clip_path = _safe_clip_path(incident_id, row[0], require_file=False)
-        if clip_path is not None and clip_path.exists():
-            try:
-                clip_path.unlink()
-            except OSError as exc:
-                raise HTTPException(
-                    status_code=500,
-                    detail="Incident clip could not be deleted",
-                ) from exc
+    clip_path = _safe_clip_path(incident_id, row[0], settings, require_file=False)
+    if clip_path is not None and clip_path.exists():
+        try:
+            clip_path.unlink()
+        except OSError as exc:
+            raise HTTPException(
+                status_code=500,
+                detail="Incident clip could not be deleted",
+            ) from exc
 
-        # Shared segments must stay preserved for other incidents. Release
-        # only links owned by this incident, then select a remaining owner.
-        removed = connection.execute(
-            """
-            DELETE FROM incident_segment
-            WHERE incident_id = %s
-            RETURNING segment_id
-            """,
-            (incident_id,),
-        ).fetchall()
-        if removed:
-            connection.execute(
-                """
-                UPDATE segment AS s
-                SET incident_id = (
-                        SELECT link.incident_id
-                        FROM incident_segment AS link
-                        WHERE link.segment_id = s.id
-                        ORDER BY link.incident_id LIMIT 1
-                    ),
-                    status = CASE WHEN EXISTS (
-                        SELECT 1 FROM incident_segment AS link
-                        WHERE link.segment_id = s.id
-                    ) THEN 'preserved' ELSE 'temporary' END
-                WHERE s.id = ANY(%s)
-                """,
-                ([item[0] for item in removed],),
-            )
+    # Shared segments must stay preserved for other incidents. Release
+    # only links owned by this incident, then select a remaining owner.
+    removed = connection.execute(
+        """
+        DELETE FROM incident_segment
+        WHERE incident_id = %s
+        RETURNING segment_id
+        """,
+        (incident_id,),
+    ).fetchall()
+    if removed:
         connection.execute(
             """
-            DELETE FROM incident
-            WHERE id = %s AND user_id = %s
+            UPDATE segment AS s
+            SET incident_id = (
+                    SELECT link.incident_id
+                    FROM incident_segment AS link
+                    WHERE link.segment_id = s.id
+                    ORDER BY link.incident_id LIMIT 1
+                ),
+                status = CASE WHEN EXISTS (
+                    SELECT 1 FROM incident_segment AS link
+                    WHERE link.segment_id = s.id
+                ) THEN 'preserved' ELSE 'temporary' END
+            WHERE s.id = ANY(%s)
             """,
-            (incident_id, principal.id),
+            ([item[0] for item in removed],),
         )
+    connection.execute(
+        """
+        DELETE FROM incident
+        WHERE id = %s AND user_id = %s
+        """,
+        (incident_id, principal.id),
+    )
 
     if clip_path is not None:
         try:

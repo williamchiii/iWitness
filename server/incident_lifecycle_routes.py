@@ -7,6 +7,8 @@ import hashlib
 import hmac
 from uuid import UUID
 
+import psycopg
+
 from fastapi import APIRouter, Depends, Header, HTTPException
 
 try:
@@ -125,6 +127,7 @@ def claim_incident(
     incident_id: UUID,
     principal: Principal = Depends(get_current_principal),
     x_trip_token: str | None = Header(default=None, alias="X-Trip-Token"),
+    connection: psycopg.Connection = Depends(db.get_db),
 ) -> IncidentResponse:
     """Attach an unclaimed incident to the first verified user who claims it."""
 
@@ -140,67 +143,66 @@ def claim_incident(
 
     expired = False
     response_row: tuple[object, ...] | None = None
-    with db.connect() as connection:
-        incident = _incident_for_trip(connection, incident_id, x_trip_token)
-        claim_state = str(incident[1])
-        expires_at = incident[2]
+    incident = _incident_for_trip(connection, incident_id, x_trip_token)
+    claim_state = str(incident[1])
+    expires_at = incident[2]
 
-        if claim_state == "claimed":
-            raise HTTPException(status_code=409, detail="Incident already claimed")
-        if claim_state == "expired":
-            expired = True
-        elif expires_at is not None and _as_utc(expires_at) <= datetime.now(
-            timezone.utc
-        ):
-            # Leave the row unclaimed so the incident worker can release its
-            # shared segment links and remove its clip during expiry cleanup.
-            expired = True
+    if claim_state == "claimed":
+        raise HTTPException(status_code=409, detail="Incident already claimed")
+    if claim_state == "expired":
+        expired = True
+    elif expires_at is not None and _as_utc(expires_at) <= datetime.now(
+        timezone.utc
+    ):
+        # Leave the row unclaimed so the incident worker can release its
+        # shared segment links and remove its clip during expiry cleanup.
+        expired = True
+    else:
+        connection.execute(
+            """
+            INSERT INTO app_user (id, email, display_name, avatar_url)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (id) DO UPDATE SET
+                email = EXCLUDED.email,
+                display_name = COALESCE(EXCLUDED.display_name, app_user.display_name),
+                avatar_url = COALESCE(EXCLUDED.avatar_url, app_user.avatar_url)
+            """,
+            (
+                user_id,
+                principal.email,
+                principal.display_name,
+                principal.avatar_url,
+            ),
+        )
+        response_row = connection.execute(
+            """
+            UPDATE incident
+            SET user_id = %s, claim_state = 'claimed', expires_at = NULL
+            WHERE id = %s
+              AND claim_state = 'unclaimed'
+              AND (expires_at IS NULL OR expires_at > clock_timestamp())
+            RETURNING id
+            """,
+            (user_id, incident_id),
+        ).fetchone()
+
+        if response_row is not None:
+            response_row = _incident_row(connection, incident_id, user_id)
         else:
-            connection.execute(
+            # This is defensive for databases that do not serialize the
+            # lock as expected. Classify a concurrent claim consistently.
+            current = connection.execute(
                 """
-                INSERT INTO app_user (id, email, display_name, avatar_url)
-                VALUES (%s, %s, %s, %s)
-                ON CONFLICT (id) DO UPDATE SET
-                    email = EXCLUDED.email,
-                    display_name = COALESCE(EXCLUDED.display_name, app_user.display_name),
-                    avatar_url = COALESCE(EXCLUDED.avatar_url, app_user.avatar_url)
-                """,
-                (
-                    user_id,
-                    principal.email,
-                    principal.display_name,
-                    principal.avatar_url,
-                ),
-            )
-            response_row = connection.execute(
-                """
-                UPDATE incident
-                SET user_id = %s, claim_state = 'claimed', expires_at = NULL
+                SELECT claim_state, expires_at <= clock_timestamp()
+                FROM incident
                 WHERE id = %s
-                  AND claim_state = 'unclaimed'
-                  AND (expires_at IS NULL OR expires_at > clock_timestamp())
-                RETURNING id
                 """,
-                (user_id, incident_id),
+                (incident_id,),
             ).fetchone()
-
-            if response_row is not None:
-                response_row = _incident_row(connection, incident_id, user_id)
-            else:
-                # This is defensive for databases that do not serialize the
-                # lock as expected. Classify a concurrent claim consistently.
-                current = connection.execute(
-                    """
-                    SELECT claim_state, expires_at <= clock_timestamp()
-                    FROM incident
-                    WHERE id = %s
-                    """,
-                    (incident_id,),
-                ).fetchone()
-                if current is not None and (
-                    str(current[0]) == "expired" or current[1] is True
-                ):
-                    expired = True
+            if current is not None and (
+                str(current[0]) == "expired" or current[1] is True
+            ):
+                expired = True
 
     if expired:
         raise HTTPException(
@@ -215,21 +217,21 @@ def claim_incident(
 @router.get("/incidents", response_model=list[IncidentResponse])
 def list_incidents(
     principal: Principal = Depends(get_current_principal),
+    connection: psycopg.Connection = Depends(db.get_db),
 ) -> list[IncidentResponse]:
     """Return metadata for incidents owned by the verified user."""
 
     user_id = _user_id(principal)
-    with db.connect() as connection:
-        rows = connection.execute(
-            f"""
-            SELECT {_INCIDENT_COLUMNS}
-            FROM incident AS i
-            JOIN camera AS c ON c.id = i.camera_id
-            WHERE i.user_id = %s
-            ORDER BY i.trigger_at DESC
-            """,
-            (user_id,),
-        ).fetchall()
+    rows = connection.execute(
+        f"""
+        SELECT {_INCIDENT_COLUMNS}
+        FROM incident AS i
+        JOIN camera AS c ON c.id = i.camera_id
+        WHERE i.user_id = %s
+        ORDER BY i.trigger_at DESC
+        """,
+        (user_id,),
+    ).fetchall()
     return [_incident_from_row(row) for row in rows]
 
 
@@ -237,12 +239,12 @@ def list_incidents(
 def get_incident(
     incident_id: UUID,
     principal: Principal = Depends(get_current_principal),
+    connection: psycopg.Connection = Depends(db.get_db),
 ) -> IncidentResponse:
     """Return one incident only when it belongs to the verified user."""
 
     user_id = _user_id(principal)
-    with db.connect() as connection:
-        row = _incident_row(connection, incident_id, user_id)
+    row = _incident_row(connection, incident_id, user_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Incident not found")
     return _incident_from_row(row)
