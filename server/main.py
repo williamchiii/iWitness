@@ -12,6 +12,7 @@ try:
     from .recorder import CameraRecorder, RecorderConfig
     from .retention import RetentionWorker
     from .segment_tracker import SegmentTracker
+    from .supervisor import RecorderSupervisor
 except ImportError:
     # Supports ``uvicorn main:app`` when launched from the server directory.
     import db
@@ -20,6 +21,7 @@ except ImportError:
     from api import router
     from retention import RetentionWorker
     from segment_tracker import SegmentTracker
+    from supervisor import RecorderSupervisor
 
 
 logger = logging.getLogger(__name__)
@@ -80,6 +82,7 @@ async def lifespan(_: FastAPI):
     recorders: dict[str, CameraRecorder] = {}
     trackers: dict[str, SegmentTracker] = {}
     retention_workers: dict[str, RetentionWorker] = {}
+    supervisors: dict[str, RecorderSupervisor] = {}
     try:
         for camera in _permitted_cameras():
             camera_id = camera["id"]
@@ -97,36 +100,51 @@ async def lifespan(_: FastAPI):
                     ffmpeg_binary=settings.ffmpeg_binary,
                 )
             )
-
-            try:
-                recorder.start()
-            except Exception:
-                logger.exception("Failed to start recorder for camera %s", camera_id)
-                _set_recording(camera_id, False)
-                continue
-
-            recorders[camera_id] = recorder
-            _set_recording(camera_id, True)
             tracker = SegmentTracker(
                 camera_id=camera_id,
                 directory=recorder.output_directory,
                 server_root=SERVER_ROOT,
                 segment_seconds=settings.segment_seconds,
             )
-            tracker.start()
-            trackers[camera_id] = tracker
             retention_worker = RetentionWorker(
                 camera_id=camera_id,
                 server_root=SERVER_ROOT,
                 media_root=settings.media_root,
                 buffer_seconds=settings.buffer_seconds,
             )
-            retention_worker.start()
+
+            # A failure starting any one of these must not stop the other
+            # permitted cameras from being tried.
+            try:
+                recorder.start()
+                tracker.start()
+                retention_worker.start()
+                supervisor = RecorderSupervisor(
+                    camera_id=camera_id,
+                    recorder=recorder,
+                    on_recording_change=_set_recording,
+                )
+                supervisor.start()
+            except Exception:
+                logger.exception("Failed to start camera %s; skipping", camera_id)
+                retention_worker.stop()
+                tracker.stop()
+                if recorder.is_running:
+                    recorder.stop()
+                _set_recording(camera_id, False)
+                continue
+
+            recorders[camera_id] = recorder
+            trackers[camera_id] = tracker
             retention_workers[camera_id] = retention_worker
+            supervisors[camera_id] = supervisor
+            _set_recording(camera_id, True)
             logger.info("Started recorder for camera %s", camera_id)
 
         yield
     finally:
+        for supervisor in supervisors.values():
+            supervisor.stop()
         for retention_worker in retention_workers.values():
             retention_worker.stop()
         for tracker in trackers.values():
