@@ -4,17 +4,19 @@ import CameraMap from '../components/CameraMap'
 import CameraModal from '../components/CameraModal'
 import Header from '../components/Header'
 import SignInDialog from '../components/SignInDialog'
-import { cameras, matchesQuery } from '../lib/cameras'
+import { cameras } from '../lib/cameras'
 import { onUserChange, redirectError, signInWithGoogle, signOut } from '../lib/auth'
 import type { User } from '../lib/auth'
 import { clearPendingIncident, readPendingIncident } from '../lib/pendingIncident'
+import { searchCameras } from '../lib/search'
 import { OUTLINE_PILL } from '../lib/styles'
 
 export default function HomePage() {
   const [hoveredId, setHoveredId] = useState<string | null>(null)
   const [query, setQuery] = useState('')
-  const matches = useMemo(() => cameras.filter((c) => matchesQuery(c, query)), [query])
-  const matchIds = useMemo(() => new Set(matches.map((c) => c.id)), [matches])
+  const matches = useMemo(() => searchCameras(cameras, query), [query])
+  const ranks = useMemo(() => new Map(matches.map((c, i) => [c.id, i])), [matches])
+  const matchIds = useMemo(() => new Set(ranks.keys()), [ranks])
   // An incident pressed before the Google redirect (or a reload) reopens its camera.
   const [selectedId, setSelectedId] = useState<string | null>(() => readPendingIncident()?.cameraId ?? null)
   const [user, setUser] = useState<User | null>(null)
@@ -66,7 +68,7 @@ export default function HomePage() {
           <div className="mt-6">
             <CameraList
               cameras={cameras}
-              matchIds={matchIds}
+              ranks={ranks}
               activeId={activeId}
               onHover={setHoveredId}
               onSelect={setSelectedId}

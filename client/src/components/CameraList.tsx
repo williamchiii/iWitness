@@ -4,18 +4,19 @@ import CameraCard from './CameraCard'
 
 interface Props {
   cameras: Camera[]
-  // Cameras matching the search. The rest stay mounted but hidden, so their preview frames are kept.
-  matchIds: Set<string>
+  // Search rank of each matching camera (0 is best). Cameras not in it stay mounted but hidden,
+  // and matches are reordered with CSS order, so preview frames are never reloaded.
+  ranks: Map<string, number>
   activeId: string | null
   onHover: (id: string | null) => void
   onSelect: (id: string) => void
 }
 
-export default function CameraList({ cameras, matchIds, activeId, onHover, onSelect }: Props) {
+export default function CameraList({ cameras, ranks, activeId, onHover, onSelect }: Props) {
   return (
-    <ul className="space-y-3">
+    <ul className="flex flex-col gap-3">
       {cameras.map((camera) => (
-        <li key={camera.id} hidden={!matchIds.has(camera.id)}>
+        <li key={camera.id} hidden={!ranks.has(camera.id)} style={{ order: ranks.get(camera.id) }}>
           <CameraCard
             camera={camera}
             number={cameraNumber(camera.id)}
