@@ -139,6 +139,26 @@ class IncidentLifecycleRouteTests(TestCase):
         self.assertEqual(response.claim_state, "claimed")
         self.assertIsNone(response.expires_at)
         self.assertEqual(connection.queries[2][1], (USER_ID, INCIDENT_ID))
+        self.assertIn("expires_at > clock_timestamp()", connection.queries[2][0])
+
+    def test_claim_requires_trip_token(self) -> None:
+        with self.assertRaises(HTTPException) as raised:
+            claim_incident(INCIDENT_ID, principal=_principal(), x_trip_token=None)
+
+        self.assertEqual(raised.exception.status_code, 403)
+
+    def test_missing_incident_returns_404(self) -> None:
+        connection = _Connection([_Result(None)])
+
+        with patch.object(lifecycle_routes.db, "connect", return_value=connection):
+            with self.assertRaises(HTTPException) as raised:
+                claim_incident(
+                    INCIDENT_ID,
+                    principal=_principal(),
+                    x_trip_token=TRIP_TOKEN,
+                )
+
+        self.assertEqual(raised.exception.status_code, 404)
 
     def test_claim_rejects_wrong_trip_token(self) -> None:
         connection = _Connection([_Result(_trip_row())])
@@ -188,6 +208,40 @@ class IncidentLifecycleRouteTests(TestCase):
                 )
 
         self.assertEqual(raised.exception.status_code, 409)
+
+    def test_explicitly_expired_incident_returns_410(self) -> None:
+        connection = _Connection([_Result(_trip_row(claim_state="expired"))])
+
+        with patch.object(lifecycle_routes.db, "connect", return_value=connection):
+            with self.assertRaises(HTTPException) as raised:
+                claim_incident(
+                    INCIDENT_ID,
+                    principal=_principal(),
+                    x_trip_token=TRIP_TOKEN,
+                )
+
+        self.assertEqual(raised.exception.status_code, 410)
+
+    def test_expiry_during_claim_returns_410(self) -> None:
+        connection = _Connection(
+            [
+                _Result(_trip_row(expires_at=datetime.now(timezone.utc) + timedelta(minutes=1))),
+                _Result(),  # app_user upsert
+                _Result(None),  # expiry passes before the guarded UPDATE
+                _Result(("unclaimed", True)),
+            ]
+        )
+
+        with patch.object(lifecycle_routes.db, "connect", return_value=connection):
+            with self.assertRaises(HTTPException) as raised:
+                claim_incident(
+                    INCIDENT_ID,
+                    principal=_principal(),
+                    x_trip_token=TRIP_TOKEN,
+                )
+
+        self.assertEqual(raised.exception.status_code, 410)
+        self.assertIn("expires_at <= clock_timestamp()", connection.queries[3][0])
 
     def test_list_uses_verified_user_id_and_newest_first_query(self) -> None:
         rows = [_incident_row(), _incident_row()]
