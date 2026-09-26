@@ -2,56 +2,52 @@
 
 from __future__ import annotations
 
+import csv
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 import logging
 from pathlib import Path
 import threading
 
 try:
     from . import db
+    from .recorder import CameraRecorder
 except ImportError:
     # Supports ``uvicorn main:app`` when launched from the server directory.
     import db
+    from recorder import CameraRecorder
 
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class _Observation:
-    size: int
-    modified_ns: int
-    stable_polls: int = 0
+@dataclass(frozen=True)
+class _ListedSegment:
+    filename: str
+    start_seconds: float
+    end_seconds: float
 
 
 class SegmentTracker:
-    """Insert a row after an output segment is complete and stable."""
+    """Insert a row for each segment FFmpeg reports as complete."""
 
     def __init__(
         self,
         camera_id: str,
         directory: Path,
         server_root: Path,
-        segment_seconds: int,
+        recorder: CameraRecorder,
         poll_seconds: float = 1.0,
-        required_stable_polls: int = 2,
     ) -> None:
-        if segment_seconds <= 0:
-            raise ValueError("segment_seconds must be greater than zero")
         if poll_seconds <= 0:
             raise ValueError("poll_seconds must be greater than zero")
-        if required_stable_polls < 1:
-            raise ValueError("required_stable_polls must be at least one")
 
         self.camera_id = camera_id
         self.directory = directory
         self.server_root = server_root
-        self.segment_seconds = segment_seconds
+        self.recorder = recorder
         self.poll_seconds = poll_seconds
-        self.required_stable_polls = required_stable_polls
         self._known_paths: set[str] = set()
-        self._observations: dict[str, _Observation] = {}
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -87,49 +83,72 @@ class SegmentTracker:
             self._stop_event.wait(self.poll_seconds)
 
     def scan_once(self) -> int:
-        """Scan once and return the number of newly inserted segments."""
+        """Insert any newly completed segments and return how many."""
+
+        started_at = self.recorder.started_at
+        if started_at is None:
+            return 0
 
         inserted = 0
-        for path in sorted(self.directory.glob("*.ts")):
+        for listed in self._read_segment_list():
+            path = self.directory / listed.filename
             relative_path = self._relative_path(path)
             if relative_path in self._known_paths:
                 continue
 
             try:
-                stat = path.stat()
+                if not path.is_file() or path.stat().st_size == 0:
+                    continue
             except FileNotFoundError:
                 continue
 
-            if stat.st_size == 0:
-                self._observations.pop(relative_path, None)
-                continue
+            actual_start = started_at + timedelta(seconds=listed.start_seconds)
+            actual_end = started_at + timedelta(seconds=listed.end_seconds)
 
-            observation = self._observations.get(relative_path)
-            if observation is None or (
-                observation.size != stat.st_size
-                or observation.modified_ns != stat.st_mtime_ns
-            ):
-                self._observations[relative_path] = _Observation(
-                    size=stat.st_size,
-                    modified_ns=stat.st_mtime_ns,
-                )
-                continue
-
-            observation.stable_polls += 1
-            if observation.stable_polls < self.required_stable_polls:
-                continue
-
-            if self._insert_segment(relative_path, stat.st_mtime):
+            if self._insert_segment(relative_path, actual_start, actual_end):
                 inserted += 1
             self._known_paths.add(relative_path)
-            self._observations.pop(relative_path, None)
 
         return inserted
 
-    def _insert_segment(self, relative_path: str, modified_timestamp: float) -> bool:
-        actual_end = datetime.fromtimestamp(modified_timestamp, tz=timezone.utc)
-        actual_start = actual_end - timedelta(seconds=self.segment_seconds)
+    def _read_segment_list(self) -> list[_ListedSegment]:
+        """Parse FFmpeg's segment list: one ``filename,start,end`` row each.
 
+        Times are the muxer's own account of what it wrote (elapsed seconds
+        since the recorder started), not an assumed fixed duration — this
+        is what lets actual_start/actual_end reflect real recorded time
+        even when a segment runs long or short (e.g. for keyframe
+        alignment). The file is rewritten from scratch by each new FFmpeg
+        run, so a row here is always for the *current* recorder run.
+        """
+
+        try:
+            with self.recorder.segment_list_path.open("r", newline="") as list_file:
+                rows = list(csv.reader(list_file))
+        except FileNotFoundError:
+            return []
+
+        segments: list[_ListedSegment] = []
+        for row in rows:
+            if len(row) != 3:
+                # A row FFmpeg is still mid-write on; it will be complete
+                # (and read again) on the next poll.
+                continue
+            filename, start_str, end_str = row
+            try:
+                segments.append(_ListedSegment(filename, float(start_str), float(end_str)))
+            except ValueError:
+                continue
+        return segments
+
+    def _insert_segment(
+        self, relative_path: str, actual_start: datetime, actual_end: datetime
+    ) -> bool:
+        # source_start / source_end are intentionally left null: neither a
+        # replayed local file nor a generic live camera feed gives FFmpeg an
+        # independent, trustworthy clock of its own to record here. If a
+        # specific source ever exposes one, populate it separately —
+        # never by copying actual_start/actual_end.
         with db.connect() as connection:
             result = connection.execute(
                 """

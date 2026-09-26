@@ -8,6 +8,7 @@ services so this module has one responsibility: managing FFmpeg.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 import subprocess
 import time
@@ -48,6 +49,7 @@ class CameraRecorder:
         self.config = config
         self._process: subprocess.Popen[bytes] | None = None
         self._run_id = time.time_ns()
+        self.started_at: datetime | None = None
 
     @property
     def output_directory(self) -> Path:
@@ -61,6 +63,12 @@ class CameraRecorder:
         """Return the path of this camera's captured FFmpeg output."""
 
         return self.output_directory / "ffmpeg.log"
+
+    @property
+    def segment_list_path(self) -> Path:
+        """Return the path of this run's FFmpeg segment list (CSV)."""
+
+        return self.output_directory / "segments.csv"
 
     @property
     def process(self) -> subprocess.Popen[bytes] | None:
@@ -114,6 +122,19 @@ class CameraRecorder:
                 "mpegts",
                 "-reset_timestamps",
                 "1",
+                # A CSV list of completed segments with their real, muxer-
+                # measured start/end times (elapsed seconds since this
+                # process started) — the ground truth for actual_start /
+                # actual_end, instead of assuming every segment is exactly
+                # segment_seconds long. "+live" flushes each entry as soon
+                # as its segment closes, so a listed segment is always
+                # complete and safe to read.
+                "-segment_list",
+                str(self.segment_list_path),
+                "-segment_list_type",
+                "csv",
+                "-segment_list_flags",
+                "+live",
                 str(self.output_directory / f"segment-{self._run_id}-%06d.ts"),
             ]
         )
@@ -137,6 +158,11 @@ class CameraRecorder:
             # inherit; the child keeps writing to it after this handle
             # closes, so it doesn't need to be kept open here.
             with self.log_path.open("ab") as log_file:
+                # Anchor wall-clock time as close to process launch as
+                # possible: the segment list's times are elapsed seconds
+                # from here, so this is what turns them into actual_start /
+                # actual_end.
+                self.started_at = datetime.now(timezone.utc)
                 self._process = subprocess.Popen(
                     self.command(),
                     stdin=subprocess.DEVNULL,
