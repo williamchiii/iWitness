@@ -59,6 +59,12 @@ class CameraRecorder:
         return output_root / self.config.camera_id
 
     @property
+    def log_path(self) -> Path:
+        """Return the path of this camera's captured FFmpeg output."""
+
+        return self.output_directory / "ffmpeg.log"
+
+    @property
     def process(self) -> subprocess.Popen[bytes] | None:
         """Return the active FFmpeg process, if one has been started."""
 
@@ -129,10 +135,16 @@ class CameraRecorder:
         self._run_id = time.time_ns()
 
         try:
-            self._process = subprocess.Popen(
-                self.command(),
-                stdin=subprocess.DEVNULL,
-            )
+            # The log file is opened only to hand FFmpeg a descriptor to
+            # inherit; the child keeps writing to it after this handle
+            # closes, so it doesn't need to be kept open here.
+            with self.log_path.open("ab") as log_file:
+                self._process = subprocess.Popen(
+                    self.command(),
+                    stdin=subprocess.DEVNULL,
+                    stdout=log_file,
+                    stderr=subprocess.STDOUT,
+                )
         except FileNotFoundError as exc:
             raise RuntimeError(
                 f"FFmpeg executable not found: {self.config.ffmpeg_binary!r}"
@@ -153,6 +165,18 @@ class CameraRecorder:
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait()
+
+    def tail_log(self, max_bytes: int = 4000) -> str:
+        """Return up to the last ``max_bytes`` of this camera's FFmpeg log."""
+
+        try:
+            with self.log_path.open("rb") as log_file:
+                log_file.seek(0, 2)
+                size = log_file.tell()
+                log_file.seek(max(0, size - max_bytes))
+                return log_file.read().decode("utf-8", errors="replace")
+        except FileNotFoundError:
+            return ""
 
     def __enter__(self) -> "CameraRecorder":
         self.start()
