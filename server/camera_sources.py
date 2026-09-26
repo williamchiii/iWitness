@@ -6,7 +6,7 @@ minutes of each camera ahead of time, then switch to them if the network
 is unreliable. Saved footage goes through the same recording pipeline and
 the app labels it "Replayed".
 
-    python camera_sources.py capture [--seconds 300]
+    python camera_sources.py capture [--seconds 300] [camera id ...]
     python camera_sources.py use replay
     python camera_sources.py use live
 
@@ -45,11 +45,16 @@ def replay_path(camera_id: str) -> Path:
     return SERVER_ROOT / "replay" / f"{camera_id}.mp4"
 
 
-def capture(seconds: int) -> None:
-    """Save the next ``seconds`` of every live feed, all cameras at once."""
+def capture(seconds: int, camera_ids: list[str]) -> None:
+    """Save the next ``seconds`` of each live feed (all when none are named), at once."""
 
+    unknown = set(camera_ids) - set(FL511_SITES)
+    if unknown:
+        raise SystemExit(f"Unknown camera id: {', '.join(sorted(unknown))}")
     jobs: dict[str, tuple[subprocess.Popen[bytes], Path]] = {}
     for camera_id, site in FL511_SITES.items():
+        if camera_ids and camera_id not in camera_ids:
+            continue
         try:
             url = fl511.resolve_stream_url(site)
         except fl511.FL511Error as exc:
@@ -119,11 +124,12 @@ def main() -> None:
     commands = parser.add_subparsers(dest="command", required=True)
     capture_parser = commands.add_parser("capture", help="save each live feed")
     capture_parser.add_argument("--seconds", type=int, default=300)
+    capture_parser.add_argument("cameras", nargs="*", metavar="camera id")
     use_parser = commands.add_parser("use", help="switch camera inputs")
     use_parser.add_argument("mode", choices=["live", "replay"])
     args = parser.parse_args()
     if args.command == "capture":
-        capture(args.seconds)
+        capture(args.seconds, args.cameras)
     else:
         use(args.mode)
 

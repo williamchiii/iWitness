@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import json
 import re
+import time
+from urllib.error import HTTPError
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
@@ -30,6 +32,10 @@ TOKEN_SERVICE_URL = (
 INPUT_PREFIX = "fl511:"
 USER_AGENT = "Mozilla/5.0 (compatible; iWitness)"
 STREAM_HEADERS = {"Origin": FL511_ORIGIN, "Referer": f"{FL511_ORIGIN}/"}
+
+# FL511 rate-limits token requests (HTTP 429), for example when every camera
+# starts at once. Wait and retry this many times, doubling from 2 s.
+_RATE_LIMIT_RETRIES = 3
 
 _IMAGE_ID = re.compile(r'data-camera-id="(\d+)"')
 _VIDEO_URL = re.compile(r'data-videourl="([^"]+)"')
@@ -63,11 +69,18 @@ def ffmpeg_input_options() -> list[str]:
 
 def _fetch(request: Request, timeout: float) -> str:
     request.add_header("User-Agent", USER_AGENT)
-    try:
-        with urlopen(request, timeout=timeout) as response:
-            return response.read().decode("utf-8")
-    except OSError as exc:
-        raise FL511Error(f"Request to {request.full_url} failed: {exc}") from exc
+    for attempt in range(_RATE_LIMIT_RETRIES + 1):
+        try:
+            with urlopen(request, timeout=timeout) as response:
+                return response.read().decode("utf-8")
+        except HTTPError as exc:
+            if exc.code != 429 or attempt == _RATE_LIMIT_RETRIES:
+                raise FL511Error(f"Request to {request.full_url} failed: {exc}") from exc
+            retry_after = exc.headers.get("Retry-After", "")
+            time.sleep(min(int(retry_after), 30) if retry_after.isdigit() else 2 * 2**attempt)
+        except OSError as exc:
+            raise FL511Error(f"Request to {request.full_url} failed: {exc}") from exc
+    raise AssertionError("unreachable")
 
 
 def resolve_stream_url(site: int, timeout: float = 10.0) -> str:
