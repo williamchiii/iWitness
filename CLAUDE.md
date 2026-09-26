@@ -29,12 +29,14 @@ Working code + clear story + rehearsed demo beats clever code. Protect the demo 
 
 ## Deliberate cuts — do not build unless asked
 
-More than the five chosen I-95 cameras, statewide coverage, route matching, maps (the camera picker is a plain list), background location, computer vision, crash/wet-road detection, fault estimation, claims chatbot, State Farm submission, PDF reports, payments, cryptographic chain of custody. If a task drifts toward these, stop and ask.
+More than the five chosen I-95 cameras, statewide coverage, route matching, background location, computer vision, crash/wet-road detection, fault estimation, claims chatbot, State Farm submission, PDF reports, payments, cryptographic chain of custody. If a task drifts toward these, stop and ask.
+
+Exception: the team decided to keep the Leaflet-based camera map (`client/src/components/CameraMap.tsx`) alongside the plain list, rather than cutting it. It's a real dependency on the OpenStreetMap tile server — check it still renders (or falls back gracefully) before relying on it for the judged demo network.
 
 ## Stack and layout
 
 - `client/` — React 19 + TypeScript + Vite 8, linted with oxlint. Vite proxies `/api/*` to `http://localhost:8000` and **strips the `/api` prefix** (so client `fetch('/api/health')` hits backend `/health`).
-- `server/` — FastAPI (Python 3.14) in `server/.venv`. Entry `server/main.py`. No `requirements.txt` yet; add one when adding dependencies.
+- `server/` — FastAPI (Python 3.14) in `server/.venv`. Entry `server/main.py`. Dependencies pinned in `server/requirements.txt`; update it when adding one.
 - Recording: FFmpeg (installed locally), one process per camera. Planned: Supabase Auth (Google), Postgres, private Storage.
 - `docs/project_brief.md` — source of truth for scope, data model, and claims.
 
@@ -76,7 +78,7 @@ CI (`.github/workflows/ci.yml`, GitHub Actions) runs on pull requests and manual
 
 | Data | Storage | Path / table |
 | --- | --- | --- |
-| Loop buffer segments | Local SSD | `media/cameras/<camera_id>/<epoch_seconds>.ts` |
+| Loop buffer segments | Local SSD | `media/cameras/<camera_id>/segment-<run_id>-<index>.ts`, plus that camera's `ffmpeg.log` and `segments.csv` (FFmpeg's own record of each segment's real start/end, in elapsed seconds since the recorder's current run started) |
 | Clip being assembled | Local SSD | `media/incidents/<incident_id>/clip.mp4` (`ffmpeg -f concat -c copy -movflags +faststart`) |
 | Saved clips | Supabase Storage, private bucket | `incidents/<user_id>/<incident_id>/v<version>.mp4` |
 | Metadata | Supabase Postgres | `camera`, `user`, `trip`, `segment`, `incident` |
@@ -131,6 +133,8 @@ Agree on file paths and API response shapes before building across the boundary.
 
 - Root `.gitignore` has `*.ts` (meant for MPEG-TS video segments), which also ignores TypeScript files such as `client/vite.config.ts`. Check `git check-ignore -v <file>` before assuming a `.ts` file is tracked; prefer a narrower pattern (for example `segments/**/*.ts`) if this bites.
 - Recorded media (`recordings/`, `segments/`, `media/`, `*.mp4`, `*.m3u8`) is gitignored. Keep video out of git.
+- A fresh clone has neither `server/.venv` nor `client/node_modules` — create the venv and `pip install -r requirements.txt`, and run `npm install`, before anything runs.
+- The seeded `camera-demo` row points at `server/replay/camera-demo.mp4`, which is gitignored and not in the repo. Drop a real demo video there (any short looping clip works for local testing) or that camera will fail to start and get skipped at boot.
 
 ## Working style for agents
 

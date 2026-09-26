@@ -1,0 +1,4 @@
+# Normalize line endings on checkin, check out as LF. Without this the
+# index staying LF-only works only by luck (matching whatever core.autocrlf
+# each contributor happens to have set locally).
+* text=auto eol=lf
