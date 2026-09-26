@@ -37,7 +37,7 @@ Exception: the team decided to keep the Leaflet-based camera map (`client/src/co
 
 - `client/` — React 19 + TypeScript + Vite 8, linted with oxlint. Vite proxies `/api/*` to `http://localhost:8000` and **strips the `/api` prefix** (so client `fetch('/api/health')` hits backend `/health`).
 - `server/` — FastAPI (Python 3.14) in `server/.venv`. Entry `server.main:app`. Dependencies pinned in `server/requirements.txt`; update it when adding one.
-- Recording: FFmpeg (installed locally), one process per camera. Planned: Supabase Auth (Google), Postgres, private Storage.
+- Recording: FFmpeg (installed locally), one process per camera. The five I-95 cameras record their live FL511 streams: a camera row with `input_url = 'fl511:<site id>'` gets a fresh DIVAS token each time its recorder starts (`server/fl511.py`). Planned: Supabase Auth (Google), Postgres, private Storage.
 - `docs/project_brief.md` — source of truth for scope, data model, and claims.
 
 ## Commands
@@ -56,6 +56,8 @@ python -m pip install -e . --no-deps
 uvicorn server.main:app --reload --port 8000
 ruff check server                            # pip install ruff; config in server/ruff.toml
 python -m unittest discover -s server/tests
+python -m server.camera_sources capture      # save 5 min of each live camera to server/replay/ (offline fallback)
+python -m server.camera_sources use replay   # record from those saved files instead ("Replayed"); `use live` to switch back; restart the backend after
 ```
 
 CI (`.github/workflows/ci.yml`, GitHub Actions) runs on pull requests and manual dispatch: client `npm ci` + lint + build; server installs the editable package, runs `ruff check`, and imports `server.main`. No database in CI. Keep both green.
