@@ -12,13 +12,15 @@ import time
 from urllib.parse import urlencode
 from uuid import UUID
 
+import psycopg
+
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import FileResponse, PlainTextResponse
 
 try:
     from . import db
     from .auth import Principal, get_optional_principal
-    from .config import SERVER_ROOT, settings
+    from .config import SERVER_ROOT, Settings, get_settings
     from .schemas import (
         BufferInfoResponse,
         CameraResponse,
@@ -31,7 +33,7 @@ except ImportError:
     # Supports ``uvicorn main:app`` when launched from the server directory.
     import db
     from auth import Principal, get_optional_principal
-    from config import SERVER_ROOT, settings
+    from config import SERVER_ROOT, Settings, get_settings
     from schemas import (
         BufferInfoResponse,
         CameraResponse,
@@ -105,16 +107,17 @@ _INCIDENT_SELECT = """
 """
 
 
-def _load_trip(trip_id: UUID, trip_token: str) -> TripResponse:
-    with db.connect() as connection:
-        row = connection.execute(
-            """
-            SELECT id, camera_id, started_at, ended_at, state, anonymous_token_hash
-            FROM trip
-            WHERE id = %s
-            """,
-            (trip_id,),
-        ).fetchone()
+def _load_trip(
+    trip_id: UUID, trip_token: str, connection: psycopg.Connection
+) -> TripResponse:
+    row = connection.execute(
+        """
+        SELECT id, camera_id, started_at, ended_at, state, anonymous_token_hash
+        FROM trip
+        WHERE id = %s
+        """,
+        (trip_id,),
+    ).fetchone()
 
     if row is None:
         raise HTTPException(status_code=404, detail="Trip not found")
@@ -123,7 +126,7 @@ def _load_trip(trip_id: UUID, trip_token: str) -> TripResponse:
     return _trip_from_row(row)
 
 
-def _signature(payload: str, expires: int) -> str:
+def _signature(payload: str, expires: int, settings: Settings) -> str:
     message = f"{payload}|{expires}".encode("utf-8")
     return hmac.new(
         settings.playback_signing_secret.encode("utf-8"),
@@ -132,15 +135,17 @@ def _signature(payload: str, expires: int) -> str:
     ).hexdigest()
 
 
-def _verify_signature(payload: str, expires: int, signature: str) -> None:
+def _verify_signature(
+    payload: str, expires: int, signature: str, settings: Settings
+) -> None:
     if expires <= int(time.time()):
         raise HTTPException(status_code=403, detail="Playback URL expired")
-    expected = _signature(payload, expires)
+    expected = _signature(payload, expires, settings)
     if not hmac.compare_digest(expected, signature):
         raise HTTPException(status_code=403, detail="Invalid playback signature")
 
 
-def _safe_media_path(file_path: str) -> Path:
+def _safe_media_path(file_path: str, settings: Settings) -> Path:
     candidate = (SERVER_ROOT / file_path).resolve()
     try:
         candidate.relative_to(settings.media_root.resolve())
@@ -150,18 +155,19 @@ def _safe_media_path(file_path: str) -> Path:
 
 
 @router.get("/cameras", response_model=list[CameraResponse])
-def list_cameras() -> list[CameraResponse]:
+def list_cameras(
+    connection: psycopg.Connection = Depends(db.get_db, scope="function"),
+) -> list[CameraResponse]:
     """List permitted cameras, newest recorder state included."""
 
-    with db.connect() as connection:
-        rows = connection.execute(
-            """
-            SELECT id, name, location, source_type, recording
-            FROM camera
-            WHERE permitted = TRUE
-            ORDER BY id
-            """
-        ).fetchall()
+    rows = connection.execute(
+        """
+        SELECT id, name, location, source_type, recording
+        FROM camera
+        WHERE permitted = TRUE
+        ORDER BY id
+        """
+    ).fetchall()
 
     return [
         CameraResponse(
@@ -176,30 +182,32 @@ def list_cameras() -> list[CameraResponse]:
 
 
 @router.post("/trips", response_model=StartTripResponse)
-def start_trip(request: StartTripRequest) -> StartTripResponse:
+def start_trip(
+    request: StartTripRequest,
+    connection: psycopg.Connection = Depends(db.get_db, scope="function"),
+) -> StartTripResponse:
     """Start an anonymous trip on a permitted camera and issue its token."""
 
-    with db.connect() as connection:
-        camera = connection.execute(
-            """
-            SELECT id
-            FROM camera
-            WHERE id = %s AND permitted = TRUE
-            """,
-            (request.camera_id,),
-        ).fetchone()
-        if camera is None:
-            raise HTTPException(status_code=404, detail="Camera not found")
+    camera = connection.execute(
+        """
+        SELECT id
+        FROM camera
+        WHERE id = %s AND permitted = TRUE
+        """,
+        (request.camera_id,),
+    ).fetchone()
+    if camera is None:
+        raise HTTPException(status_code=404, detail="Camera not found")
 
-        trip_token = secrets.token_urlsafe(32)
-        row = connection.execute(
-            """
-            INSERT INTO trip (camera_id, anonymous_token_hash)
-            VALUES (%s, %s)
-            RETURNING id, camera_id, started_at, ended_at, state
-            """,
-            (request.camera_id, _token_hash(trip_token)),
-        ).fetchone()
+    trip_token = secrets.token_urlsafe(32)
+    row = connection.execute(
+        """
+        INSERT INTO trip (camera_id, anonymous_token_hash)
+        VALUES (%s, %s)
+        RETURNING id, camera_id, started_at, ended_at, state
+        """,
+        (request.camera_id, _token_hash(trip_token)),
+    ).fetchone()
 
     return StartTripResponse(
         trip=_trip_from_row(row),
@@ -211,26 +219,26 @@ def start_trip(request: StartTripRequest) -> StartTripResponse:
 def end_trip(
     trip_id: UUID,
     x_trip_token: str | None = Header(default=None, alias="X-Trip-Token"),
+    connection: psycopg.Connection = Depends(db.get_db, scope="function"),
 ) -> TripResponse:
     """End a trip. The camera's loop buffer keeps recording regardless."""
 
     if not x_trip_token:
         raise HTTPException(status_code=403, detail="Trip token required")
 
-    trip = _load_trip(trip_id, x_trip_token)
+    trip = _load_trip(trip_id, x_trip_token, connection)
     if trip.state == "ended":
         return trip
 
-    with db.connect() as connection:
-        row = connection.execute(
-            """
-            UPDATE trip
-            SET state = 'ended', ended_at = now()
-            WHERE id = %s
-            RETURNING id, camera_id, started_at, ended_at, state
-            """,
-            (trip_id,),
-        ).fetchone()
+    row = connection.execute(
+        """
+        UPDATE trip
+        SET state = 'ended', ended_at = now()
+        WHERE id = %s
+        RETURNING id, camera_id, started_at, ended_at, state
+        """,
+        (trip_id,),
+    ).fetchone()
     return _trip_from_row(row)
 
 
@@ -239,29 +247,30 @@ def get_buffer(
     trip_id: UUID,
     request: Request,
     x_trip_token: str | None = Header(default=None, alias="X-Trip-Token"),
+    connection: psycopg.Connection = Depends(db.get_db, scope="function"),
+    settings: Settings = Depends(get_settings),
 ) -> BufferInfoResponse:
     """Return the camera's current loop window and a signed playlist URL."""
 
     if not x_trip_token:
         raise HTTPException(status_code=403, detail="Trip token required")
 
-    trip = _load_trip(trip_id, x_trip_token)
-    with db.connect() as connection:
-        row = connection.execute(
-            """
-            SELECT min(actual_start), max(actual_end)
-            FROM segment
-            WHERE camera_id = %s
-              AND status IN ('temporary', 'preserved')
-            """,
-            (trip.camera_id,),
-        ).fetchone()
+    trip = _load_trip(trip_id, x_trip_token, connection)
+    row = connection.execute(
+        """
+        SELECT min(actual_start), max(actual_end)
+        FROM segment
+        WHERE camera_id = %s
+          AND status IN ('temporary', 'preserved')
+        """,
+        (trip.camera_id,),
+    ).fetchone()
 
     earliest = _utc(row[0]) if row[0] is not None else None
     latest = _utc(row[1]) if row[1] is not None else None
     expires = int(time.time()) + settings.playback_url_seconds
     payload = f"playlist|{trip_id}|{trip.camera_id}"
-    signature = _signature(payload, expires)
+    signature = _signature(payload, expires, settings)
     query = urlencode({"trip_id": str(trip_id), "exp": expires, "sig": signature})
     playlist_path = f"/playback/buffer/{trip.camera_id}/playlist.m3u8?{query}"
     playlist_url = str(request.base_url).rstrip("/") + playlist_path
@@ -283,13 +292,15 @@ def create_incident(
     trip_id: UUID,
     x_trip_token: str | None = Header(default=None, alias="X-Trip-Token"),
     principal: Principal | None = Depends(get_optional_principal),
+    connection: psycopg.Connection = Depends(db.get_db, scope="function"),
+    settings: Settings = Depends(get_settings),
 ) -> IncidentResponse:
     """Create an incident and preserve footage already in its time window."""
 
     if not x_trip_token:
         raise HTTPException(status_code=403, detail="Trip token required")
 
-    trip = _load_trip(trip_id, x_trip_token)
+    trip = _load_trip(trip_id, x_trip_token, connection)
     user_id: UUID | None = None
     if principal is not None:
         try:
@@ -299,91 +310,90 @@ def create_incident(
         if not principal.email:
             raise HTTPException(status_code=401, detail="Authenticated user email is missing")
 
-    with db.connect() as connection:
-        if principal is not None:
-            connection.execute(
-                """
-                INSERT INTO app_user (id, email, display_name, avatar_url)
-                VALUES (%s, %s, %s, %s)
-                ON CONFLICT (id) DO UPDATE SET
-                    email = EXCLUDED.email,
-                    display_name = COALESCE(EXCLUDED.display_name, app_user.display_name),
-                    avatar_url = COALESCE(EXCLUDED.avatar_url, app_user.avatar_url)
-                """,
-                (user_id, principal.email, principal.display_name, principal.avatar_url),
-            )
-        incident_id = connection.execute(
-            """
-            INSERT INTO incident (
-                trip_id,
-                camera_id,
-                user_id,
-                trigger_at,
-                requested_start,
-                requested_end,
-                processing_state,
-                claim_state,
-                expires_at
-            )
-            VALUES (
-                %s,
-                %s,
-                %s,
-                now(),
-                now() - (%s * interval '1 second'),
-                now() + (%s * interval '1 second'),
-                'recording',
-                CASE WHEN %s::uuid IS NULL THEN 'unclaimed' ELSE 'claimed' END,
-                CASE WHEN %s::uuid IS NULL THEN now() + (%s * interval '1 second') ELSE NULL END
-            )
-            RETURNING id
-            """,
-            (
-                trip_id,
-                trip.camera_id,
-                user_id,
-                settings.pre_trigger_seconds,
-                settings.post_trigger_seconds,
-                user_id,
-                user_id,
-                settings.unclaimed_incident_seconds,
-            ),
-        ).fetchone()[0]
-
-        # Keep newly selected files out of loop retention.
+    if principal is not None:
         connection.execute(
             """
-            UPDATE segment AS s
-            SET status = 'preserved', incident_id = %s
-            WHERE s.camera_id = %s
-              AND s.status = 'temporary'
-              AND s.actual_start < (
-                  SELECT trigger_at FROM incident WHERE id = %s
-              )
-              AND s.actual_end > (
-                  SELECT requested_start FROM incident WHERE id = %s
-              )
+            INSERT INTO app_user (id, email, display_name, avatar_url)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (id) DO UPDATE SET
+                email = EXCLUDED.email,
+                display_name = COALESCE(EXCLUDED.display_name, app_user.display_name),
+                avatar_url = COALESCE(EXCLUDED.avatar_url, app_user.avatar_url)
             """,
-            (incident_id, trip.camera_id, incident_id, incident_id),
+            (user_id, principal.email, principal.display_name, principal.avatar_url),
         )
-        # Associate already-preserved files too: separate incidents on the
-        # same camera may need the same pre-trigger footage.
-        connection.execute(
-            """
-            INSERT INTO incident_segment (incident_id, segment_id)
-            SELECT %s, s.id
-            FROM segment AS s
-            JOIN incident AS i ON i.id = %s
-            WHERE s.camera_id = i.camera_id
-              AND s.status = 'preserved'
-              AND s.actual_start < i.trigger_at
-              AND s.actual_end > i.requested_start
-            ON CONFLICT DO NOTHING
-            """,
-            (incident_id, incident_id),
+    incident_id = connection.execute(
+        """
+        INSERT INTO incident (
+            trip_id,
+            camera_id,
+            user_id,
+            trigger_at,
+            requested_start,
+            requested_end,
+            processing_state,
+            claim_state,
+            expires_at
         )
+        VALUES (
+            %s,
+            %s,
+            %s,
+            now(),
+            now() - (%s * interval '1 second'),
+            now() + (%s * interval '1 second'),
+            'recording',
+            CASE WHEN %s::uuid IS NULL THEN 'unclaimed' ELSE 'claimed' END,
+            CASE WHEN %s::uuid IS NULL THEN now() + (%s * interval '1 second') ELSE NULL END
+        )
+        RETURNING id
+        """,
+        (
+            trip_id,
+            trip.camera_id,
+            user_id,
+            settings.pre_trigger_seconds,
+            settings.post_trigger_seconds,
+            user_id,
+            user_id,
+            settings.unclaimed_incident_seconds,
+        ),
+    ).fetchone()[0]
 
-        row = connection.execute(_INCIDENT_SELECT, (incident_id,)).fetchone()
+    # Keep newly selected files out of loop retention.
+    connection.execute(
+        """
+        UPDATE segment AS s
+        SET status = 'preserved', incident_id = %s
+        WHERE s.camera_id = %s
+          AND s.status = 'temporary'
+          AND s.actual_start < (
+              SELECT trigger_at FROM incident WHERE id = %s
+          )
+          AND s.actual_end > (
+              SELECT requested_start FROM incident WHERE id = %s
+          )
+        """,
+        (incident_id, trip.camera_id, incident_id, incident_id),
+    )
+    # Associate already-preserved files too: separate incidents on the
+    # same camera may need the same pre-trigger footage.
+    connection.execute(
+        """
+        INSERT INTO incident_segment (incident_id, segment_id)
+        SELECT %s, s.id
+        FROM segment AS s
+        JOIN incident AS i ON i.id = %s
+        WHERE s.camera_id = i.camera_id
+          AND s.status = 'preserved'
+          AND s.actual_start < i.trigger_at
+          AND s.actual_end > i.requested_start
+        ON CONFLICT DO NOTHING
+        """,
+        (incident_id, incident_id),
+    )
+
+    row = connection.execute(_INCIDENT_SELECT, (incident_id,)).fetchone()
 
     if row is None:
         # The insert succeeded, so reaching this branch indicates a database
@@ -401,33 +411,34 @@ def buffer_playlist(
     trip_id: UUID = Query(...),
     exp: int = Query(...),
     sig: str = Query(...),
+    connection: psycopg.Connection = Depends(db.get_db, scope="function"),
+    settings: Settings = Depends(get_settings),
 ) -> PlainTextResponse:
     """Build an HLS playlist covering the camera's whole current loop."""
 
-    _verify_signature(f"playlist|{trip_id}|{camera_id}", exp, sig)
+    _verify_signature(f"playlist|{trip_id}|{camera_id}", exp, sig, settings)
 
-    with db.connect() as connection:
-        trip = connection.execute(
-            "SELECT camera_id FROM trip WHERE id = %s",
-            (trip_id,),
-        ).fetchone()
-        if trip is None or trip[0] != camera_id:
-            raise HTTPException(status_code=404, detail="Buffer not found")
+    trip = connection.execute(
+        "SELECT camera_id FROM trip WHERE id = %s",
+        (trip_id,),
+    ).fetchone()
+    if trip is None or trip[0] != camera_id:
+        raise HTTPException(status_code=404, detail="Buffer not found")
 
-        rows = connection.execute(
-            """
-            SELECT id, file_path, actual_start, actual_end
-            FROM segment
-            WHERE camera_id = %s
-              AND status IN ('temporary', 'preserved')
-            ORDER BY actual_start ASC
-            """,
-            (camera_id,),
-        ).fetchall()
+    rows = connection.execute(
+        """
+        SELECT id, file_path, actual_start, actual_end
+        FROM segment
+        WHERE camera_id = %s
+          AND status IN ('temporary', 'preserved')
+        ORDER BY actual_start ASC
+        """,
+        (camera_id,),
+    ).fetchall()
 
     segments: list[tuple[UUID, datetime, datetime]] = []
     for segment_id, file_path, actual_start, actual_end in rows:
-        path = _safe_media_path(file_path)
+        path = _safe_media_path(file_path, settings)
         if not path.is_file() or path.stat().st_size == 0:
             continue
         segments.append((segment_id, _utc(actual_start), _utc(actual_end)))
@@ -455,6 +466,7 @@ def buffer_playlist(
         segment_signature = _signature(
             f"segment|{segment_id}|{camera_id}",
             expires,
+            settings,
         )
         query = urlencode({
             "camera_id": camera_id,
@@ -484,24 +496,25 @@ def playback_segment(
     camera_id: str = Query(...),
     exp: int = Query(...),
     sig: str = Query(...),
+    connection: psycopg.Connection = Depends(db.get_db, scope="function"),
+    settings: Settings = Depends(get_settings),
 ) -> FileResponse:
     """Serve one segment file behind its own short-lived signed URL."""
 
-    _verify_signature(f"segment|{segment_id}|{camera_id}", exp, sig)
+    _verify_signature(f"segment|{segment_id}|{camera_id}", exp, sig, settings)
 
-    with db.connect() as connection:
-        row = connection.execute(
-            """
-            SELECT file_path
-            FROM segment
-            WHERE id = %s AND camera_id = %s
-            """,
-            (segment_id, camera_id),
-        ).fetchone()
+    row = connection.execute(
+        """
+        SELECT file_path
+        FROM segment
+        WHERE id = %s AND camera_id = %s
+        """,
+        (segment_id, camera_id),
+    ).fetchone()
     if row is None:
         raise HTTPException(status_code=404, detail="Segment not found")
 
-    path = _safe_media_path(row[0])
+    path = _safe_media_path(row[0], settings)
     if not path.is_file() or path.stat().st_size == 0:
         raise HTTPException(status_code=404, detail="Segment not found")
 

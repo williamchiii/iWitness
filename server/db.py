@@ -1,3 +1,5 @@
+from typing import Generator
+
 import psycopg
 
 try:
@@ -19,3 +21,17 @@ def connect() -> psycopg.Connection:
     if not DATABASE_URL:
         raise RuntimeError("DATABASE_URL is not configured")
     return psycopg.connect(DATABASE_URL, connect_timeout=10)
+
+
+def get_db() -> Generator[psycopg.Connection, None, None]:
+    """FastAPI dependency yielding a connection scoped to one handler call.
+
+    Always inject with ``Depends(get_db, scope="function")``. FastAPI's
+    default scope for a generator dependency is ``"request"``, which keeps
+    the connection open until after the response is sent — for a
+    ``FileResponse``/streaming route that means holding it open for the
+    whole transfer.
+    """
+
+    with connect() as connection:
+        yield connection

@@ -85,3 +85,9 @@ class Settings:
 
 
 settings = Settings.from_environment()
+
+
+def get_settings() -> Settings:
+    """FastAPI dependency for the process-wide settings singleton."""
+
+    return settings
