@@ -8,7 +8,7 @@ import Toast from '../components/Toast'
 import type { ToastMessage } from '../components/Toast'
 import { cameras } from '../lib/cameras'
 import { formatClockRange } from '../lib/format'
-import type { Incident } from '../lib/mock'
+import type { Incident } from '../lib/api/types'
 import { onUserChange, redirectError, signInWithGoogle, signOut } from '../lib/auth'
 import type { User } from '../lib/auth'
 import { clearPendingIncident, readPendingIncident } from '../lib/pendingIncident'
@@ -22,7 +22,7 @@ export default function HomePage() {
   const ranks = useMemo(() => new Map(matches.map((c, i) => [c.id, i])), [matches])
   const matchIds = useMemo(() => new Set(ranks.keys()), [ranks])
   // An incident pressed before the Google redirect (or a reload) reopens its camera.
-  const [selectedId, setSelectedId] = useState<string | null>(() => readPendingIncident()?.cameraId ?? null)
+  const [selectedId, setSelectedId] = useState<string | null>(() => readPendingIncident()?.incident.camera_id ?? null)
   const [user, setUser] = useState<User | null>(null)
   const [showSignIn, setShowSignIn] = useState(false)
   // Sign-in cancelled at Google, or a failed log out, shows on load as a toast.
@@ -34,7 +34,7 @@ export default function HomePage() {
       showToast({
         tone: 'success',
         title: 'Saved to your Library',
-        body: `Recording from ${formatClockRange(incident.requestedStart, incident.requestedEnd)}.`,
+        body: `Recording from ${formatClockRange(Date.parse(incident.requested_start), Date.parse(incident.requested_end))}.`,
         link: { href: '/saved', label: 'View' },
       }),
     [showToast],

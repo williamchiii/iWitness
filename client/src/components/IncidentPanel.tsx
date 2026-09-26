@@ -1,27 +1,31 @@
 import { useEffect, useRef, useState } from 'react'
+import { api, CLIP_AFTER_SECONDS, CLIP_BEFORE_SECONDS } from '../lib/api'
+import type { Incident, StartTripResponse } from '../lib/api/types'
 import { formatClock, formatDuration, formatSpan } from '../lib/format'
-import { CLIP_AFTER_SECONDS, CLIP_BEFORE_SECONDS, reportIncident, saveIncident } from '../lib/mock'
-import type { Incident } from '../lib/mock'
 import { clearPendingIncident, storePendingIncident } from '../lib/pendingIncident'
 import { useNow } from '../lib/useNow'
 import SignInDialog from './SignInDialog'
 
 interface Props {
-  cameraId: string
+  tripPromise: Promise<StartTripResponse>
   signedIn: boolean
   onSignIn: () => Promise<void>
   onIncident: (incident: Incident | null) => void
   // Called once the incident is attached to the user's account.
   onSaved: (incident: Incident) => void
+  // The trip token that authorizes claiming `incident`; see CameraModal.
+  tripToken: string | null
+  onTripTokenChange: (tripToken: string | null) => void
   // Lets the modal block closing while a press is in flight.
   onBusyChange: (busy: boolean) => void
   incident: Incident | null
 }
 
 function Pending({ incident, signedIn, onLogIn }: { incident: Incident; signedIn: boolean; onLogIn: () => void }) {
-  const secondsLeft = Math.max(0, (incident.expiresAt! - useNow()) / 1000)
+  const expiresAtMs = incident.expires_at ? Date.parse(incident.expires_at) : null
+  const secondsLeft = Math.max(0, ((expiresAtMs ?? 0) - useNow()) / 1000)
 
-  if (secondsLeft === 0) {
+  if (expiresAtMs !== null && secondsLeft === 0) {
     return (
       <div className="mt-4 rounded-lg border border-line bg-surface p-4 text-sm">
         <p className="font-medium">Time ran out.</p>
@@ -42,8 +46,8 @@ function Pending({ incident, signedIn, onLogIn }: { incident: Incident; signedIn
     <div className="mt-4 flex flex-wrap items-center justify-between gap-4 rounded-lg border border-line bg-surface p-4 text-sm">
       <div>
         <p>
-          Pressed at <span className="tabular-nums">{formatClock(incident.triggerAt)}</span>. Footage from before
-          your press is being kept.
+          Pressed at <span className="tabular-nums">{formatClock(Date.parse(incident.trigger_at))}</span>. Footage
+          from before your press is being kept.
         </p>
         <p className="mt-1 text-muted">
           Log in within <span className="font-medium tabular-nums text-ink">{formatDuration(secondsLeft)}</span> to
@@ -62,11 +66,13 @@ function Pending({ incident, signedIn, onLogIn }: { incident: Incident; signedIn
 }
 
 export default function IncidentPanel({
-  cameraId,
+  tripPromise,
   signedIn,
   onSignIn,
   onIncident,
   onSaved,
+  tripToken,
+  onTripTokenChange,
   onBusyChange,
   incident,
 }: Props) {
@@ -84,40 +90,45 @@ export default function IncidentPanel({
     }
   }, [])
 
+  const saved = incident?.claim_state === 'claimed'
+
   async function press() {
     setBusy(true)
     onBusyChange(true)
     setSaveError(null)
-    const reported = await reportIncident(cameraId, signedIn)
-    if (!reported.saved) storePendingIncident(reported)
+    const { trip, trip_token: freshTripToken } = await tripPromise
+    const reported = await api.reportIncident(trip.id, freshTripToken, signedIn)
+    onTripTokenChange(freshTripToken)
+    if (reported.claim_state !== 'claimed') storePendingIncident({ incident: reported, tripToken: freshTripToken })
     // The camera was closed while this was in flight: the incident is
     // already persisted above, so skip the remaining state updates
     // rather than touching an unmounted component.
     if (!mounted.current) return
     onIncident(reported)
-    if (reported.saved) onSaved(reported)
+    if (reported.claim_state === 'claimed') onSaved(reported)
     setBusy(false)
     onBusyChange(false)
-    if (!reported.saved) setShowLogIn(true)
+    if (reported.claim_state !== 'claimed') setShowLogIn(true)
   }
 
   // Once the user is logged in, whether here or back from the Google redirect,
   // attach the pending incident to their account.
   useEffect(() => {
-    if (!signedIn || !incident || incident.saved || saving.current) return
-    if (incident.expiresAt !== null && Date.now() >= incident.expiresAt) return
+    if (!signedIn || !incident || !tripToken || incident.claim_state === 'claimed' || saving.current) return
+    if (incident.expires_at !== null && Date.now() >= Date.parse(incident.expires_at)) return
     saving.current = true
-    saveIncident(incident)
-      .then((saved) => {
+    api
+      .claimIncident(incident.id, tripToken, signedIn)
+      .then((claimed) => {
         clearPendingIncident()
-        onIncident(saved)
-        onSaved(saved)
+        onIncident(claimed)
+        onSaved(claimed)
       })
       .catch(() => setSaveError('Could not save this incident.'))
       .finally(() => {
         saving.current = false
       })
-  }, [signedIn, incident, onIncident, onSaved, saveAttempt])
+  }, [signedIn, incident, tripToken, onIncident, onSaved, saveAttempt])
 
   return (
     <div className="mt-1 px-6">
@@ -133,14 +144,14 @@ export default function IncidentPanel({
           type="button"
           onClick={press}
           // A logged-out save waits for login before another can start; saved ones don't block.
-          disabled={busy || (incident !== null && !incident.saved)}
+          disabled={busy || (incident !== null && !saved)}
           className="rounded-md bg-rec px-5 py-3 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-40"
         >
-          {busy ? 'Saving...' : incident?.saved ? 'Save another' : 'Save recording'}
+          {busy ? 'Saving...' : saved ? 'Save another' : 'Save recording'}
         </button>
       </div>
 
-      {incident && !incident.saved && !saveError && (
+      {incident && !saved && !saveError && (
         <Pending incident={incident} signedIn={signedIn} onLogIn={() => setShowLogIn(true)} />
       )}
       {saveError && (
@@ -163,9 +174,9 @@ export default function IncidentPanel({
         This camera may not show your vehicle. Footage gives context, not proof of fault.
       </p>
 
-      {showLogIn && !signedIn && incident && !incident.saved && (
+      {showLogIn && !signedIn && incident && !saved && (
         <SignInDialog
-          deadline={incident.expiresAt!}
+          deadline={incident.expires_at ? Date.parse(incident.expires_at) : undefined}
           onSignIn={onSignIn}
           onClose={() => setShowLogIn(false)}
         />
