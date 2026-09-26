@@ -54,6 +54,8 @@ class _FakeDatabase:
         exclusive: list[tuple[Any, ...]] | None = None,
         shared: list[str] | None = None,
         newly_shared: list[str] | None = None,
+        fail_commit_for: str | None = None,
+        delete_segment_returns: bool = True,
     ) -> None:
         self.incidents = incidents
         self.latest_by_incident = latest_by_incident
@@ -65,6 +67,9 @@ class _FakeDatabase:
         self.association_calls: list[tuple[Any, ...]] = []
         self.expiry_calls: list[str] = []
         self.expiry_query: str | None = None
+        self.fail_commit_for = fail_commit_for
+        self.delete_segment_returns = delete_segment_returns
+        self._locked_incident: str | None = None
 
     def connect(self) -> "_FakeDatabase":
         return self
@@ -73,13 +78,20 @@ class _FakeDatabase:
         return self
 
     def __exit__(self, *_: object) -> None:
+        if self.fail_commit_for is not None and self._locked_incident == self.fail_commit_for:
+            self._locked_incident = None
+            raise RuntimeError("simulated transaction failure")
+        self._locked_incident = None
         return None
 
     def execute(self, query: str, params: tuple[Any, ...] = ()) -> _Result:
         normalized = " ".join(query.split()).lower()
-        if normalized.startswith("select id, storage_path"):
+        if normalized.startswith("select id from incident"):
             self.expiry_query = normalized
-            return _Result(rows=self.expired)
+            return _Result(rows=[(row[0],) for row in self.expired])
+        if normalized.startswith("select storage_path from incident"):
+            self._locked_incident = str(params[0])
+            return _Result(row=next(((row[1],) for row in self.expired if row[0] == params[0]), None))
         if normalized.startswith("select s.id, s.file_path"):
             self.expiry_calls.append("select exclusive")
             return _Result(rows=self.exclusive)
@@ -88,7 +100,7 @@ class _FakeDatabase:
             return _Result(row=(1,) if params[0] in self.newly_shared else None)
         if normalized.startswith("delete from segment"):
             self.expiry_calls.append("delete segment")
-            return _Result()
+            return _Result(row=(params[0],) if self.delete_segment_returns else None)
         if normalized.startswith("select id, camera_id"):
             return _Result(rows=self.incidents)
         if normalized.startswith("update segment"):
@@ -233,11 +245,100 @@ class IncidentWorkerTests(unittest.TestCase):
             )
             settings = SimpleNamespace(cameras_root=root / "media" / "cameras", incidents_root=root / "media" / "incidents")
             with patch.object(worker_module, "SERVER_ROOT", root), patch.object(worker_module, "settings", settings):
-                with self.assertRaisesRegex(ValueError, "Unsafe expired segment path"):
+                with self.assertLogs(level="ERROR") as logs:
                     IncidentWorker(database=database, processor=_Processor()).run_once()
 
             self.assertTrue(unrelated.exists())
             self.assertEqual(database.expiry_calls, ["select exclusive", "recheck"])
+            self.assertIn("Unsafe expired segment path", "\n".join(logs.output))
+
+    def test_bad_storage_path_does_not_stop_later_expiry_or_assembly(self) -> None:
+        with _workspace_directory() as root:
+            unrelated = root / "unrelated.mp4"
+            unrelated.write_bytes(b"keep")
+            incident_dir = root / "media" / "incidents" / "incident-good"
+            incident_dir.mkdir(parents=True)
+            good_clip = incident_dir / "clip.mp4"
+            good_clip.write_bytes(b"video")
+            database = _FakeDatabase(
+                [self.incidents[0]],
+                {"incident-ready": self.start + timedelta(seconds=20)},
+                expired=[("incident-bad", "unrelated.mp4"), ("incident-good", "media/incidents/incident-good/clip.mp4")],
+            )
+            processor = _Processor()
+            settings = SimpleNamespace(cameras_root=root / "media" / "cameras", incidents_root=root / "media" / "incidents")
+            with patch.object(worker_module, "SERVER_ROOT", root), patch.object(worker_module, "settings", settings):
+                with self.assertLogs(level="ERROR") as logs:
+                    submitted = IncidentWorker(database=database, processor=processor).run_once()
+
+            self.assertEqual(submitted, 1)
+            self.assertEqual(processor.processed, ["incident-ready"])
+            self.assertTrue(unrelated.exists())
+            self.assertFalse(good_clip.exists())
+            self.assertIn("Unsafe expired clip path", "\n".join(logs.output))
+
+    def test_expiry_query_failure_does_not_stop_assembly(self) -> None:
+        class FailingExpiryDatabase(_FakeDatabase):
+            def execute(self, query: str, params: tuple[Any, ...] = ()) -> _Result:
+                if "select id from incident" in " ".join(query.split()).lower():
+                    raise RuntimeError("simulated expiry query failure")
+                return super().execute(query, params)
+
+        database = FailingExpiryDatabase(
+            [self.incidents[0]],
+            {"incident-ready": self.start + timedelta(seconds=20)},
+        )
+        processor = _Processor()
+        with self.assertLogs(level="ERROR") as logs:
+            submitted = IncidentWorker(database=database, processor=processor).run_once()
+
+        self.assertEqual(submitted, 1)
+        self.assertEqual(processor.processed, ["incident-ready"])
+        self.assertIn("simulated expiry query failure", "\n".join(logs.output))
+
+    def test_commit_failure_preserves_segment_and_clip_files(self) -> None:
+        with _workspace_directory() as root:
+            camera = root / "media" / "cameras" / "camera-demo"
+            incident = root / "media" / "incidents" / "incident-expired"
+            camera.mkdir(parents=True)
+            incident.mkdir(parents=True)
+            segment = camera / "segment.ts"
+            clip = incident / "clip.mp4"
+            for path in (segment, clip):
+                path.write_bytes(b"video")
+            database = _FakeDatabase(
+                [], {}, expired=[("incident-expired", "media/incidents/incident-expired/clip.mp4")],
+                exclusive=[("segment-one", "media/cameras/camera-demo/segment.ts", "camera-demo")],
+                fail_commit_for="incident-expired",
+            )
+            settings = SimpleNamespace(cameras_root=root / "media" / "cameras", incidents_root=root / "media" / "incidents")
+            with patch.object(worker_module, "SERVER_ROOT", root), patch.object(worker_module, "settings", settings):
+                with self.assertLogs(level="ERROR") as logs:
+                    IncidentWorker(database=database, processor=_Processor()).run_once()
+
+            self.assertTrue(segment.exists())
+            self.assertTrue(clip.exists())
+            self.assertIn("simulated transaction failure", "\n".join(logs.output))
+
+    def test_guarded_delete_that_skips_segment_keeps_its_file(self) -> None:
+        with _workspace_directory() as root:
+            camera = root / "media" / "cameras" / "camera-demo"
+            camera.mkdir(parents=True)
+            segment = camera / "segment.ts"
+            segment.write_bytes(b"video")
+            database = _FakeDatabase(
+                [], {}, expired=[("incident-expired", None)],
+                exclusive=[("segment-one", "media/cameras/camera-demo/segment.ts", "camera-demo")],
+                delete_segment_returns=False,
+            )
+            settings = SimpleNamespace(
+                cameras_root=root / "media" / "cameras",
+                incidents_root=root / "media" / "incidents",
+            )
+            with patch.object(worker_module, "SERVER_ROOT", root), patch.object(worker_module, "settings", settings):
+                IncidentWorker(database=database, processor=_Processor()).run_once()
+
+            self.assertTrue(segment.exists())
 
     def test_expiry_rechecks_shared_link_after_locking_segment(self) -> None:
         with _workspace_directory() as root:
