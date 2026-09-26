@@ -74,6 +74,7 @@ def _fetch(request: Request, timeout: float) -> str:
             with urlopen(request, timeout=timeout) as response:
                 return response.read().decode("utf-8")
         except HTTPError as exc:
+            exc.close()  # the error holds the response open
             if exc.code != 429 or attempt == _RATE_LIMIT_RETRIES:
                 raise FL511Error(f"Request to {request.full_url} failed: {exc}") from exc
             retry_after = exc.headers.get("Retry-After", "")
@@ -102,17 +103,19 @@ def resolve_stream_url(site: int, timeout: float = 10.0) -> str:
         Request(f"{FL511_ORIGIN}/Camera/GetVideoUrl?imageId={image_id.group(1)}"),
         timeout,
     )
-    token_query = json.loads(
-        _fetch(
-            Request(
-                TOKEN_SERVICE_URL,
-                data=token_request.encode("utf-8"),
-                headers={"Content-Type": "application/json", **STREAM_HEADERS},
-                method="POST",
-            ),
-            timeout,
-        )
+    token_response = _fetch(
+        Request(
+            TOKEN_SERVICE_URL,
+            data=token_request.encode("utf-8"),
+            headers={"Content-Type": "application/json", **STREAM_HEADERS},
+            method="POST",
+        ),
+        timeout,
     )
+    try:
+        token_query = json.loads(token_response)
+    except ValueError:
+        token_query = None
     if not isinstance(token_query, str) or not token_query.startswith("?token="):
         raise FL511Error(f"DIVAS returned no token for FL511 camera {site}")
     return stream_url + token_query
