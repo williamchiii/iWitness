@@ -80,6 +80,10 @@ class RetentionWorker:
     def cleanup_once(self) -> int:
         """Delete expired temporary segments and return the deleted count."""
 
+        # One connection for the whole cycle instead of one per query (and,
+        # previously, one more per deleted segment) — this runs every
+        # poll_seconds for every camera, so that adds up over a multi-hour
+        # recording.
         with db.connect() as connection:
             latest_row = connection.execute(
                 """
@@ -90,12 +94,11 @@ class RetentionWorker:
                 (self.camera_id,),
             ).fetchone()
 
-        latest_end = latest_row[0] if latest_row else None
-        if latest_end is None:
-            return 0
+            latest_end = latest_row[0] if latest_row else None
+            if latest_end is None:
+                return 0
 
-        cutoff = latest_end - timedelta(seconds=self.buffer_seconds + self.grace_seconds)
-        with db.connect() as connection:
+            cutoff = latest_end - timedelta(seconds=self.buffer_seconds + self.grace_seconds)
             rows = connection.execute(
                 """
                 SELECT id, file_path
@@ -108,36 +111,40 @@ class RetentionWorker:
                 (self.camera_id, cutoff),
             ).fetchall()
 
-        deleted = 0
-        for segment_id, file_path in rows:
-            path = self._safe_media_path(file_path)
-            if path is None:
-                logger.error("Skipping unsafe segment path %s", file_path)
-                continue
+            deletable_ids = []
+            for segment_id, file_path in rows:
+                path = self._safe_media_path(file_path)
+                if path is None:
+                    logger.error("Skipping unsafe segment path %s", file_path)
+                    continue
 
-            try:
-                path.unlink(missing_ok=True)
-            except OSError:
-                logger.exception("Could not delete segment file %s", path)
-                continue
+                try:
+                    path.unlink(missing_ok=True)
+                except OSError:
+                    logger.exception("Could not delete segment file %s", path)
+                    continue
 
-            with db.connect() as connection:
-                result = connection.execute(
-                    """
-                    DELETE FROM segment
-                    WHERE id = %s
-                      AND camera_id = %s
-                      AND status = 'temporary'
-                    """,
-                    (segment_id, self.camera_id),
-                )
-                removed = result.rowcount == 1
+                deletable_ids.append(segment_id)
 
-            if removed:
-                deleted += 1
-                logger.info("Removed expired segment %s", file_path)
+            if not deletable_ids:
+                return 0
 
-        return deleted
+            # A single batched delete instead of one round trip per file.
+            removed_paths = connection.execute(
+                """
+                DELETE FROM segment
+                WHERE camera_id = %s
+                  AND status = 'temporary'
+                  AND id = ANY(%s)
+                RETURNING file_path
+                """,
+                (self.camera_id, deletable_ids),
+            ).fetchall()
+
+        for (file_path,) in removed_paths:
+            logger.info("Removed expired segment %s", file_path)
+
+        return len(removed_paths)
 
     def _safe_media_path(self, file_path: str) -> Path | None:
         candidate = (self.server_root / file_path).resolve()
