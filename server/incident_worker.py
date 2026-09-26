@@ -183,7 +183,7 @@ class IncidentWorker:
         return latest_end is not None and _as_utc(latest_end) >= incident.requested_end
 
     def _expire_abandoned(self) -> None:
-        """Expire unclaimed incidents and release segments no longer referenced."""
+        """Expire unclaimed incidents and remove video no other incident needs."""
 
         with self.database.connect() as connection:
             rows = connection.execute(
@@ -195,6 +195,51 @@ class IncidentWorker:
                 """
             ).fetchall()
             for incident_id, storage_path in rows:
+                # Lock the segment rows before removing their files. A new
+                # incident cannot acquire a link to one while it is deleted.
+                exclusive = connection.execute(
+                    """
+                    SELECT s.id, s.file_path, s.camera_id
+                    FROM segment AS s
+                    JOIN incident_segment AS link ON link.segment_id = s.id
+                    WHERE link.incident_id = %s
+                      AND NOT EXISTS (
+                          SELECT 1 FROM incident_segment AS other
+                          WHERE other.segment_id = s.id
+                            AND other.incident_id <> %s
+                      )
+                    FOR UPDATE OF s
+                    """,
+                    (incident_id, incident_id),
+                ).fetchall()
+                for segment_id, file_path, camera_id in exclusive:
+                    # The candidate list may have been read before this row
+                    # lock became available. Recheck links now that new ones
+                    # cannot be added until this transaction ends.
+                    shared = connection.execute(
+                        """
+                        SELECT 1 FROM incident_segment
+                        WHERE segment_id = %s AND incident_id <> %s
+                        LIMIT 1
+                        """,
+                        (segment_id, incident_id),
+                    ).fetchone()
+                    if shared is not None:
+                        continue
+                    self._segment_path(str(file_path), str(camera_id)).unlink(
+                        missing_ok=True
+                    )
+                    connection.execute(
+                        """
+                        DELETE FROM segment
+                        WHERE id = %s
+                          AND NOT EXISTS (
+                              SELECT 1 FROM incident_segment
+                              WHERE segment_id = %s AND incident_id <> %s
+                          )
+                        """,
+                        (segment_id, segment_id, incident_id),
+                    )
                 self._remove_expired_clip(str(incident_id), storage_path)
                 connection.execute(
                     """
@@ -232,6 +277,16 @@ class IncidentWorker:
                     )
 
     @staticmethod
+    def _segment_path(file_path: str, camera_id: str) -> Path:
+        if not camera_id or Path(camera_id).name != camera_id:
+            raise ValueError(f"Unsafe camera ID: {camera_id}")
+        root = (settings.cameras_root / camera_id).resolve()
+        candidate = (SERVER_ROOT / file_path).resolve()
+        if not candidate.is_relative_to(root):
+            raise ValueError(f"Unsafe expired segment path: {file_path}")
+        return candidate
+
+    @staticmethod
     def _remove_expired_clip(incident_id: str, storage_path: str | None) -> None:
         root = (settings.incidents_root / incident_id).resolve()
         candidate = (
@@ -242,6 +297,8 @@ class IncidentWorker:
         if not candidate.is_relative_to(root):
             raise ValueError(f"Unsafe expired clip path: {storage_path}")
         candidate.unlink(missing_ok=True)
+        (root / "clip.tmp.mp4").unlink(missing_ok=True)
+        (root / "segments.concat.txt").unlink(missing_ok=True)
 
 
 def _as_utc(value: datetime) -> datetime:
