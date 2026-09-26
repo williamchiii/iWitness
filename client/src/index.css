@@ -24,6 +24,15 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* Tailwind v4 resets buttons to the default arrow; show the hand on anything clickable. */
+@layer base {
+  button:not(:disabled),
+  [role='button']:not(:disabled),
+  input[type='range'] {
+    cursor: pointer;
+  }
+}
+
 /* Leaflet: grey out OSM tiles so the map stays quiet behind the pins. */
 .leaflet-container {
   background: var(--color-surface);
@@ -64,4 +73,49 @@ body {
   background: var(--color-ink);
   color: #fff;
   border-color: var(--color-ink);
+}
+
+/* Frosted surfaces floating over the map: the blurred tiles behind them are the texture.
+   Pane and pill share one fill so they read as the same material; tune it here. */
+.glass-pane,
+.glass-pill {
+  background: rgb(255 255 255 / 0.42);
+  backdrop-filter: blur(24px) saturate(150%);
+  -webkit-backdrop-filter: blur(24px) saturate(150%);
+}
+
+.glass-pane {
+  box-shadow:
+    0 16px 48px rgb(12 12 12 / 0.13),
+    inset 0 1px 0 rgb(255 255 255 / 0.7);
+}
+
+.glass-pill {
+  box-shadow:
+    0 8px 28px rgb(12 12 12 / 0.14),
+    inset 0 1px 0 rgb(255 255 255 / 0.7);
+}
+
+/* Cards sit on the pane's own frost, so they only need a translucent fill. */
+.glass-card {
+  background: rgb(255 255 255 / 0.4);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.55);
+}
+
+/* No blur support (or reduced transparency): fall back to an opaque panel. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .glass-pane,
+  .glass-pill {
+    background: rgb(255 255 255 / 0.95);
+  }
+}
+
+/* Toast countdown line (components/Toast.tsx). */
+@keyframes toast-countdown {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
+  }
 }

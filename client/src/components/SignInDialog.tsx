@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { isMockAuth } from '../lib/auth'
 import { formatDuration } from '../lib/format'
 import { useNow } from '../lib/useNow'
 
@@ -20,6 +21,7 @@ function Countdown({ secondsLeft }: { secondsLeft: number }) {
 
 export default function SignInDialog({ onSignIn, onClose, deadline }: Props) {
   const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const now = useNow()
   const expired = deadline !== undefined && now >= deadline
 
@@ -34,10 +36,17 @@ export default function SignInDialog({ onSignIn, onClose, deadline }: Props) {
     return () => window.removeEventListener('keydown', onKey, true)
   }, [onClose])
 
+  // Stays busy on success: the page is about to leave for Google, or the parent
+  // closes this box once the user is signed in.
   async function signIn() {
     setBusy(true)
-    await onSignIn()
-    onClose()
+    setError(null)
+    try {
+      await onSignIn()
+    } catch {
+      setError('Could not start Google sign-in. Try again.')
+      setBusy(false)
+    }
   }
 
   return (
@@ -69,10 +78,11 @@ export default function SignInDialog({ onSignIn, onClose, deadline }: Props) {
         >
           {busy ? 'Logging in...' : 'Continue with Google'}
         </button>
+        {error && <p className="mt-3 text-sm text-rec">{error}</p>}
         <button type="button" onClick={onClose} className="mt-3 w-full py-2 text-sm text-muted hover:text-ink">
           {deadline ? 'Not now' : 'Cancel'}
         </button>
-        <p className="mt-4 text-xs text-muted">Test mode: no real Google account is used yet.</p>
+        {isMockAuth && <p className="mt-4 text-xs text-muted">Test mode: no real Google account is used.</p>}
       </div>
     </div>
   )

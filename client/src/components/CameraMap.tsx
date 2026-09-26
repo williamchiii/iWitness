@@ -2,6 +2,7 @@ import L from 'leaflet'
 import type { LatLngBounds } from 'leaflet'
 import { useEffect, useMemo, useRef } from 'react'
 import { MapContainer, Marker, TileLayer, Tooltip, ZoomControl, useMap } from 'react-leaflet'
+import { cameraNumber } from '../lib/cameras'
 import type { Camera } from '../lib/cameras'
 import { CAMERA_SVG } from '../lib/icons'
 
@@ -16,18 +17,39 @@ function pin(active: boolean) {
 
 const PIN = pin(false)
 const PIN_ACTIVE = pin(true)
-const PADDING: [number, number] = [64, 64]
+const PADDING = 64
+// Street level: the cameras are only about a kilometre apart.
+const FOCUS_ZOOM = 16
+// Width the floating camera list covers on the left at md and up: 36rem pane + 24px inset + 24px gap.
+const PANE_PX = 624
+// Room for the floating header pill at the top of the map on desktop.
+const HEADER_PX = 112
+
+// True once the list stops stacking above the map and starts floating over it.
+function paneOverlaps() {
+  return window.matchMedia('(min-width: 768px)').matches
+}
+
+function fitOptions() {
+  return {
+    paddingTopLeft: (paneOverlaps() ? [PANE_PX, HEADER_PX] : [PADDING, PADDING]) as [number, number],
+    paddingBottomRight: [PADDING, PADDING] as [number, number],
+  }
+}
 
 // Fly to the opened camera; back out to all cameras when it closes.
+// Both keep the pins in the strip of map the glass pane does not cover.
 function Focus({ camera, bounds }: { camera: Camera | undefined; bounds: LatLngBounds }) {
   const map = useMap()
   const hasOpened = useRef(false)
   useEffect(() => {
     if (camera) {
       hasOpened.current = true
-      map.flyTo([camera.lat, camera.lng], 14, { duration: 0.8 })
+      const point = map.project([camera.lat, camera.lng], FOCUS_ZOOM)
+      const shift = paneOverlaps() ? PANE_PX / 2 : 0
+      map.flyTo(map.unproject(point.subtract([shift, 0]), FOCUS_ZOOM), FOCUS_ZOOM, { duration: 0.8 })
     } else if (hasOpened.current) {
-      map.flyToBounds(bounds, { padding: PADDING, duration: 0.8 })
+      map.flyToBounds(bounds, { ...fitOptions(), duration: 0.8 })
     }
   }, [map, camera, bounds])
   return null
@@ -36,28 +58,31 @@ function Focus({ camera, bounds }: { camera: Camera | undefined; bounds: LatLngB
 interface Props {
   cameras: Camera[]
   activeId: string | null
+  // Cameras matching the search; the rest fade out but stay on the map.
+  matchIds: Set<string>
   selected: Camera | undefined
   onHover: (id: string | null) => void
   onSelect: (id: string) => void
 }
 
-export default function CameraMap({ cameras, activeId, selected, onHover, onSelect }: Props) {
+export default function CameraMap({ cameras, activeId, matchIds, selected, onHover, onSelect }: Props) {
   const bounds = useMemo(() => L.latLngBounds(cameras.map((c) => [c.lat, c.lng])), [cameras])
 
   return (
-    <MapContainer bounds={bounds} boundsOptions={{ padding: PADDING }} zoomControl={false} className="size-full">
+    <MapContainer bounds={bounds} boundsOptions={fitOptions()} zoomControl={false} className="size-full">
       <TileLayer
         url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
         maxZoom={19}
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
       />
       <ZoomControl position="bottomright" />
-      {cameras.map((camera, i) => (
+      {cameras.map((camera) => (
         <Marker
           key={camera.id}
           position={[camera.lat, camera.lng]}
           icon={activeId === camera.id ? PIN_ACTIVE : PIN}
           zIndexOffset={activeId === camera.id ? 1000 : 0}
+          opacity={matchIds.has(camera.id) ? 1 : 0.3}
           eventHandlers={{
             click: () => onSelect(camera.id),
             mouseover: () => onHover(camera.id),
@@ -65,7 +90,7 @@ export default function CameraMap({ cameras, activeId, selected, onHover, onSele
           }}
         >
           <Tooltip direction="top" offset={[0, -18]} className="cam-tooltip">
-            Cam {i + 1}: {camera.name}
+            Cam {cameraNumber(camera.id)}: {camera.name}
           </Tooltip>
         </Marker>
       ))}

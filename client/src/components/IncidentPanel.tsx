@@ -1,7 +1,8 @@
-import { useState } from 'react'
-import { formatClock, formatDuration } from '../lib/format'
-import { reportIncident, saveIncident } from '../lib/mock'
+import { useEffect, useRef, useState } from 'react'
+import { formatClock, formatDuration, formatSpan } from '../lib/format'
+import { CLIP_AFTER_SECONDS, CLIP_BEFORE_SECONDS, reportIncident, saveIncident } from '../lib/mock'
 import type { Incident } from '../lib/mock'
+import { clearPendingIncident, storePendingIncident } from '../lib/pendingIncident'
 import { useNow } from '../lib/useNow'
 import SignInDialog from './SignInDialog'
 
@@ -10,10 +11,12 @@ interface Props {
   signedIn: boolean
   onSignIn: () => Promise<void>
   onIncident: (incident: Incident | null) => void
+  // Called once the incident is attached to the user's account.
+  onSaved: (incident: Incident) => void
   incident: Incident | null
 }
 
-function Pending({ incident, onLogIn }: { incident: Incident; onLogIn: () => void }) {
+function Pending({ incident, signedIn, onLogIn }: { incident: Incident; signedIn: boolean; onLogIn: () => void }) {
   const secondsLeft = Math.max(0, (incident.expiresAt! - useNow()) / 1000)
 
   if (secondsLeft === 0) {
@@ -21,6 +24,14 @@ function Pending({ incident, onLogIn }: { incident: Incident; onLogIn: () => voi
       <div className="mt-4 rounded-lg border border-line bg-surface p-4 text-sm">
         <p className="font-medium">Time ran out.</p>
         <p className="mt-1 text-muted">This footage was not saved and has been deleted.</p>
+      </div>
+    )
+  }
+
+  if (signedIn) {
+    return (
+      <div className="mt-4 rounded-lg border border-line bg-surface p-4 text-sm">
+        <p>Saving to your account...</p>
       </div>
     )
   }
@@ -48,52 +59,89 @@ function Pending({ incident, onLogIn }: { incident: Incident; onLogIn: () => voi
   )
 }
 
-export default function IncidentPanel({ cameraId, signedIn, onSignIn, onIncident, incident }: Props) {
+export default function IncidentPanel({ cameraId, signedIn, onSignIn, onIncident, onSaved, incident }: Props) {
   const [busy, setBusy] = useState(false)
   const [showLogIn, setShowLogIn] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+  const [saveAttempt, setSaveAttempt] = useState(0)
+  const saving = useRef(false)
+  const mounted = useRef(true)
+
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+    }
+  }, [])
 
   async function press() {
     setBusy(true)
+    setSaveError(null)
     const reported = await reportIncident(cameraId, signedIn)
+    // The camera was closed while this was in flight: don't bring the incident back.
+    if (!mounted.current) return
+    if (!reported.saved) storePendingIncident(reported)
     onIncident(reported)
+    if (reported.saved) onSaved(reported)
     setBusy(false)
     if (!reported.saved) setShowLogIn(true)
   }
 
-  async function signInAndSave() {
-    await onSignIn()
-    onIncident(await saveIncident(incident!))
-  }
+  // Once the user is logged in, whether here or back from the Google redirect,
+  // attach the pending incident to their account.
+  useEffect(() => {
+    if (!signedIn || !incident || incident.saved || saving.current) return
+    if (incident.expiresAt !== null && Date.now() >= incident.expiresAt) return
+    saving.current = true
+    saveIncident(incident)
+      .then((saved) => {
+        clearPendingIncident()
+        onIncident(saved)
+        onSaved(saved)
+      })
+      .catch(() => setSaveError('Could not save this incident.'))
+      .finally(() => {
+        saving.current = false
+      })
+  }, [signedIn, incident, onIncident, onSaved, saveAttempt])
 
   return (
-    <div className="mt-6 border-t border-line px-6 pt-5">
+    <div className="mt-1 px-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div className="max-w-md">
           <p className="font-medium tracking-tight">In an incident?</p>
           <p className="mt-1 text-sm text-muted">
-            Press the button and we keep this camera's footage from before the press, then record a little longer.
-            You only log in to save it.
+            Saves {formatSpan(CLIP_BEFORE_SECONDS)} of footage before you press and {formatSpan(CLIP_AFTER_SECONDS)}{' '}
+            after. {signedIn ? 'It goes straight to your Library.' : "You'll log in to keep it."}
           </p>
         </div>
         <button
           type="button"
           onClick={press}
-          disabled={busy || incident !== null}
+          // A logged-out save waits for login before another can start; saved ones don't block.
+          disabled={busy || (incident !== null && !incident.saved)}
           className="rounded-md bg-rec px-5 py-3 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-40"
         >
-          {busy ? 'Keeping footage...' : 'I was in an incident'}
+          {busy ? 'Saving...' : incident?.saved ? 'Save another' : 'Save recording'}
         </button>
       </div>
 
-      {incident && !incident.saved && <Pending incident={incident} onLogIn={() => setShowLogIn(true)} />}
-
-      {incident?.saved && (
-        <div className="mt-4 rounded-lg border border-line bg-surface p-4 text-sm">
-          <p className="font-medium">Saved to your account.</p>
-          <p className="mt-1 text-muted">
-            Pressed at <span className="tabular-nums">{formatClock(incident.triggerAt)}</span>. It will appear in
-            Saved Incidents when the clip is ready.
-          </p>
+      {incident && !incident.saved && !saveError && (
+        <Pending incident={incident} signedIn={signedIn} onLogIn={() => setShowLogIn(true)} />
+      )}
+      {saveError && (
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-4 rounded-lg border border-line bg-surface p-4 text-sm">
+          <p className="text-rec">{saveError} Your footage is still being kept.</p>
+          <button
+            type="button"
+            onClick={() => {
+              setSaveError(null)
+              setSaveAttempt((n) => n + 1)
+            }}
+            className="rounded-md bg-ink px-4 py-2 text-sm font-medium text-white hover:bg-black"
+          >
+            Try again
+          </button>
         </div>
       )}
 
@@ -101,10 +149,10 @@ export default function IncidentPanel({ cameraId, signedIn, onSignIn, onIncident
         This camera may not show your vehicle. Footage gives context, not proof of fault.
       </p>
 
-      {showLogIn && incident && !incident.saved && (
+      {showLogIn && !signedIn && incident && !incident.saved && (
         <SignInDialog
           deadline={incident.expiresAt!}
-          onSignIn={signInAndSave}
+          onSignIn={onSignIn}
           onClose={() => setShowLogIn(false)}
         />
       )}

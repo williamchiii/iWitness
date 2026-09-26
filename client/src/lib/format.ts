@@ -1,5 +1,33 @@
+// All cameras are in Miami, so times are shown in Miami's zone whatever the
+// viewer's machine is set to. The zone name follows daylight saving: EDT or EST.
+const CAMERA_TIME_ZONE = 'America/New_York'
+
 export function formatClock(ms: number) {
-  return new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' })
+  return new Date(ms).toLocaleTimeString('en-US', {
+    timeZone: CAMERA_TIME_ZONE,
+    hour: 'numeric',
+    minute: '2-digit',
+    second: '2-digit',
+    timeZoneName: 'short',
+  })
+}
+
+// "7:54:40 to 7:55:55 AM EDT", naming AM/PM and the zone once when both ends share them.
+export function formatClockRange(startMs: number, endMs: number) {
+  const start = formatClock(startMs)
+  const end = formatClock(endMs)
+  const suffix = / [AP]M \S+$/
+  const shared = start.match(suffix)?.[0]
+  return shared && shared === end.match(suffix)?.[0] ? `${start.slice(0, -shared.length)} to ${end}` : `${start} to ${end}`
+}
+
+// 60 -> "1 minute", 120 -> "2 minutes", 15 -> "15 seconds".
+export function formatSpan(seconds: number) {
+  if (seconds % 60 === 0) {
+    const minutes = seconds / 60
+    return `${minutes} minute${minutes === 1 ? '' : 's'}`
+  }
+  return `${seconds} second${seconds === 1 ? '' : 's'}`
 }
 
 export function formatDuration(seconds: number) {

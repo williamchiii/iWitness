@@ -1,5 +1,6 @@
+import { SAMPLE_STREAM_URL } from '../lib/cameras'
 import type { Camera } from '../lib/cameras'
-import { CAMERA_SVG } from '../lib/icons'
+import StreamPreview from './StreamPreview'
 
 interface Props {
   camera: Camera
@@ -16,15 +17,12 @@ export default function CameraCard({ camera, number, active, onHover, onSelect }
       onClick={() => onSelect(camera.id)}
       onMouseEnter={() => onHover(camera.id)}
       onMouseLeave={() => onHover(null)}
-      className={`flex w-full gap-5 rounded-xl border bg-white p-3 text-left transition-colors ${
-        active ? 'border-ink' : 'border-line hover:border-neutral-400'
+      className={`glass-card flex w-full gap-5 rounded-xl border p-3 text-left transition-colors ${
+        active ? 'border-ink' : 'border-white/70 hover:border-white'
       }`}
     >
-      {/* Feed placeholder until live video is wired up. */}
-      <div
-        className="grid aspect-video w-56 shrink-0 place-items-center rounded-lg bg-surface text-neutral-400"
-        dangerouslySetInnerHTML={{ __html: CAMERA_SVG }}
-      />
+      {/* Every camera stands in with the sample stream until the backend serves real buffers. */}
+      <StreamPreview src={SAMPLE_STREAM_URL} label="Sample" />
       <div className="flex min-w-0 flex-col py-1">
         <p className="text-xs font-medium uppercase tracking-wider text-muted">Cam {number}</p>
         <p className="mt-1 text-lg font-medium tracking-tight">{camera.name}</p>
