@@ -12,6 +12,7 @@ from typing import Any
 from . import db, media_cleanup
 from .config import SERVER_ROOT, settings
 from .incident_processor import IncidentProcessor
+from .segment_preservation import preserve_segments
 
 
 logger = logging.getLogger(__name__)
@@ -144,39 +145,12 @@ class IncidentWorker:
         """Preserve overlapping temporary rows and report post-window readiness."""
 
         with self.database.connect() as connection:
-            connection.execute(
-                """
-                UPDATE segment
-                SET status = 'preserved', incident_id = %s
-                WHERE camera_id = %s
-                  AND status = 'temporary'
-                  AND actual_start < %s
-                  AND actual_end > %s
-                """,
-                (
-                    incident.id,
-                    incident.camera_id,
-                    incident.requested_end,
-                    incident.requested_start,
-                ),
-            )
-            connection.execute(
-                """
-                INSERT INTO incident_segment (incident_id, segment_id)
-                SELECT %s, s.id
-                FROM segment AS s
-                WHERE s.camera_id = %s
-                  AND s.status = 'preserved'
-                  AND s.actual_start < %s
-                  AND s.actual_end > %s
-                ON CONFLICT DO NOTHING
-                """,
-                (
-                    incident.id,
-                    incident.camera_id,
-                    incident.requested_end,
-                    incident.requested_start,
-                ),
+            preserve_segments(
+                connection,
+                incident.id,
+                incident.camera_id,
+                incident.requested_start,
+                incident.requested_end,
             )
             row = connection.execute(
                 """

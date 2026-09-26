@@ -186,6 +186,37 @@ class IncidentProcessorTests(unittest.TestCase):
         self.assertIn("+faststart", commands[0])
         self.assertFalse((output.parent / "segments.concat.txt").exists())
 
+    def test_duration_sums_segment_lengths_without_counting_recording_gap(self) -> None:
+        paths = [
+            "media/cameras/camera-demo/segment-a.ts",
+            "media/cameras/camera-demo/segment-b.ts",
+        ]
+        for path in paths:
+            (self.root / path).write_bytes(b"segment")
+        database = self._database(
+            requested_end=self.start + timedelta(seconds=30),
+            file_paths=paths,
+        )
+        database.segment_rows[1] = (
+            paths[1],
+            self.start + timedelta(seconds=25),
+            self.start + timedelta(seconds=35),
+        )
+
+        def runner(command: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
+            Path(command[-1]).write_bytes(b"assembled-mp4")
+            return subprocess.CompletedProcess(command, 0, "", "")
+
+        result = self._processor(database, runner).process(self.incident_id)
+
+        self.assertEqual(result.processing_state, "ready")
+        self.assertEqual(result.actual_start, self.start)
+        self.assertEqual(result.actual_end, self.start + timedelta(seconds=35))
+        self.assertEqual(result.duration_seconds, 20.0)
+        self.assertEqual(database.ready_update[:3], (
+            self.start, self.start + timedelta(seconds=35), 20.0,
+        ))
+
     def test_waits_until_post_trigger_window_is_preserved(self) -> None:
         path = "media/cameras/camera-demo/segment-a.ts"
         (self.root / path).write_bytes(b"segment")
