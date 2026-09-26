@@ -7,7 +7,6 @@ from datetime import datetime, timedelta, timezone
 import logging
 from pathlib import Path
 import threading
-import time
 
 try:
     from . import db
