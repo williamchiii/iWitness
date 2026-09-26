@@ -92,7 +92,9 @@ class AuthTests(unittest.TestCase):
 
     def test_bad_signature_is_rejected(self) -> None:
         token = self._token_from_claims()
-        altered = f"{token[:-1]}{'A' if token[-1] != 'A' else 'B'}"
+        header, payload, signature = token.split(".")
+        altered_signature = ("A" if signature[0] != "A" else "B") + signature[1:]
+        altered = f"{header}.{payload}.{altered_signature}"
 
         with self.assertRaises(InvalidAccessToken):
             verify_access_token(altered)
