@@ -9,15 +9,9 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 
-try:
-    from . import db
-    from .auth import Principal, get_current_principal
-    from .incident_schemas import IncidentResponse
-except ImportError:
-    # Supports ``uvicorn main:app`` when launched from the server directory.
-    import db
-    from auth import Principal, get_current_principal
-    from incident_schemas import IncidentResponse
+from . import db
+from .auth import Principal, get_current_principal
+from .incident_schemas import IncidentResponse
 
 
 router = APIRouter()

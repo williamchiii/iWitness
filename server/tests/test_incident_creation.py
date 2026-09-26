@@ -10,14 +10,9 @@ from uuid import UUID
 
 os.environ.setdefault("PLAYBACK_SIGNING_SECRET", "incident-creation-test-secret")
 
-try:
-    from server import api
-    from server.auth import Principal
-    from server.schemas import TripResponse
-except ModuleNotFoundError:
-    import api
-    from auth import Principal
-    from schemas import TripResponse
+from server import api
+from server.auth import Principal
+from server.schemas import TripResponse
 
 
 INCIDENT_ID = UUID("11111111-1111-1111-1111-111111111111")

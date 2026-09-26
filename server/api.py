@@ -15,31 +15,17 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import FileResponse, PlainTextResponse
 
-try:
-    from . import db
-    from .auth import Principal, get_optional_principal
-    from .config import SERVER_ROOT, settings
-    from .schemas import (
-        BufferInfoResponse,
-        CameraResponse,
-        StartTripRequest,
-        StartTripResponse,
-        TripResponse,
-    )
-    from .incident_schemas import IncidentResponse
-except ImportError:
-    # Supports ``uvicorn main:app`` when launched from the server directory.
-    import db
-    from auth import Principal, get_optional_principal
-    from config import SERVER_ROOT, settings
-    from schemas import (
-        BufferInfoResponse,
-        CameraResponse,
-        StartTripRequest,
-        StartTripResponse,
-        TripResponse,
-    )
-    from incident_schemas import IncidentResponse
+from . import db
+from .auth import Principal, get_optional_principal
+from .config import SERVER_ROOT, settings
+from .schemas import (
+    BufferInfoResponse,
+    CameraResponse,
+    StartTripRequest,
+    StartTripResponse,
+    TripResponse,
+)
+from .incident_schemas import IncidentResponse
 
 
 router = APIRouter()

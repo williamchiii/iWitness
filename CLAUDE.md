@@ -36,7 +36,7 @@ Exception: the team decided to keep the Leaflet-based camera map (`client/src/co
 ## Stack and layout
 
 - `client/` — React 19 + TypeScript + Vite 8, linted with oxlint. Vite proxies `/api/*` to `http://localhost:8000` and **strips the `/api` prefix** (so client `fetch('/api/health')` hits backend `/health`).
-- `server/` — FastAPI (Python 3.14) in `server/.venv`. Entry `server/main.py`. Dependencies pinned in `server/requirements.txt`; update it when adding one.
+- `server/` — FastAPI (Python 3.14) in `server/.venv`. Entry `server.main:app`. Dependencies pinned in `server/requirements.txt`; update it when adding one.
 - Recording: FFmpeg (installed locally), one process per camera. Planned: Supabase Auth (Google), Postgres, private Storage.
 - `docs/project_brief.md` — source of truth for scope, data model, and claims.
 
@@ -48,13 +48,17 @@ cd client && npm install && npm run dev      # http://localhost:5173
 cd client && npm run build                   # tsc -b + vite build
 cd client && npm run lint                    # oxlint
 
-# server
-cd server && source .venv/bin/activate
-uvicorn main:app --reload --port 8000        # or: fastapi dev main.py
-ruff check .                                 # pip install ruff; config in server/ruff.toml
+# server (from repository root)
+python -m venv server/.venv
+source server/.venv/bin/activate             # Windows PowerShell: server/.venv/Scripts/Activate.ps1
+python -m pip install -r server/requirements.txt
+python -m pip install -e . --no-deps
+uvicorn server.main:app --reload --port 8000
+ruff check server                            # pip install ruff; config in server/ruff.toml
+python -m unittest discover -s server/tests
 ```
 
-CI (`.github/workflows/ci.yml`, GitHub Actions) runs on pull requests and manual dispatch: client `npm ci` + lint + build; server `ruff check` + `python -c "import main"`. No database in CI. Keep both green.
+CI (`.github/workflows/ci.yml`, GitHub Actions) runs on pull requests and manual dispatch: client `npm ci` + lint + build; server installs the editable package, runs `ruff check`, and imports `server.main`. No database in CI. Keep both green.
 
 ## Auth model: watch anonymously, sign in to save
 
@@ -133,7 +137,7 @@ Agree on file paths and API response shapes before building across the boundary.
 
 - Root `.gitignore` has `*.ts` (meant for MPEG-TS video segments), which also ignores TypeScript files such as `client/vite.config.ts`. Check `git check-ignore -v <file>` before assuming a `.ts` file is tracked; prefer a narrower pattern (for example `segments/**/*.ts`) if this bites.
 - Recorded media (`recordings/`, `segments/`, `media/`, `*.mp4`, `*.m3u8`) is gitignored. Keep video out of git.
-- A fresh clone has neither `server/.venv` nor `client/node_modules` — create the venv and `pip install -r requirements.txt`, and run `npm install`, before anything runs.
+- A fresh clone has neither `server/.venv` nor `client/node_modules` — create the venv, install `server/requirements.txt` and the editable package as shown above, and run `npm install`, before anything runs.
 - The seeded `camera-demo` row points at `server/replay/camera-demo.mp4`, which is gitignored and not in the repo. Drop a real demo video there (any short looping clip works for local testing) or that camera will fail to start and get skipped at boot.
 
 ## Working style for agents

@@ -7,11 +7,7 @@ import threading
 import time
 from typing import Callable
 
-try:
-    from .recorder import CameraRecorder
-except ImportError:
-    # Supports ``uvicorn main:app`` when launched from the server directory.
-    from recorder import CameraRecorder
+from .recorder import CameraRecorder
 
 
 logger = logging.getLogger(__name__)
