@@ -12,6 +12,15 @@ export function formatClock(ms: number) {
   })
 }
 
+// 60 -> "1 minute", 120 -> "2 minutes", 15 -> "15 seconds".
+export function formatSpan(seconds: number) {
+  if (seconds % 60 === 0) {
+    const minutes = seconds / 60
+    return `${minutes} minute${minutes === 1 ? '' : 's'}`
+  }
+  return `${seconds} second${seconds === 1 ? '' : 's'}`
+}
+
 export function formatDuration(seconds: number) {
   const s = Math.max(0, Math.round(seconds))
   const pad = (n: number) => String(n).padStart(2, '0')

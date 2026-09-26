@@ -12,6 +12,11 @@ export interface Incident {
 
 const CLAIM_WINDOW_MS = 15 * 60 * 1000
 
+// How much footage a press keeps. Server settings PRE_TRIGGER_SECONDS and
+// POST_TRIGGER_SECONDS in docs/api_contract.md; keep these in step with them.
+export const CLIP_BEFORE_SECONDS = 60
+export const CLIP_AFTER_SECONDS = 15
+
 function delay(ms = 400) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { formatClock, formatDuration } from '../lib/format'
-import { reportIncident, saveIncident } from '../lib/mock'
+import { formatClock, formatDuration, formatSpan } from '../lib/format'
+import { CLIP_AFTER_SECONDS, CLIP_BEFORE_SECONDS, reportIncident, saveIncident } from '../lib/mock'
 import type { Incident } from '../lib/mock'
 import { clearPendingIncident, storePendingIncident } from '../lib/pendingIncident'
 import { useNow } from '../lib/useNow'
@@ -106,8 +106,8 @@ export default function IncidentPanel({ cameraId, signedIn, onSignIn, onIncident
         <div className="max-w-md">
           <p className="font-medium tracking-tight">In an incident?</p>
           <p className="mt-1 text-sm text-muted">
-            Press the button and we keep this camera's footage from before the press, then record a little longer.
-            You only log in to save it.
+            Saves {formatSpan(CLIP_BEFORE_SECONDS)} of footage before you press and {formatSpan(CLIP_AFTER_SECONDS)}{' '}
+            after. {signedIn ? 'It goes straight to your Library.' : "You'll log in to keep it."}
           </p>
         </div>
         <button
@@ -116,7 +116,7 @@ export default function IncidentPanel({ cameraId, signedIn, onSignIn, onIncident
           disabled={busy || incident !== null}
           className="rounded-md bg-rec px-5 py-3 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-40"
         >
-          {busy ? 'Keeping footage...' : 'I was in an incident'}
+          {busy ? 'Saving...' : 'Save recording'}
         </button>
       </div>
 
