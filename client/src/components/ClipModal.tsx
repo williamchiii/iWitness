@@ -53,7 +53,7 @@ export default function ClipModal({ incident, onClose }: Props) {
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[2000] flex items-center justify-center bg-black/20 p-4 backdrop-blur-md"
+      className="fixed inset-0 z-[2000] flex items-center justify-center bg-black/10 p-4 backdrop-blur-[2px]"
       onClick={onClose}
     >
       <div
