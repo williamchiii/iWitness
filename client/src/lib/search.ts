@@ -1,5 +1,5 @@
 import { cameraNumber } from './cameras'
-import type { Camera } from './cameras'
+import type { CameraPlace } from './cameras'
 
 // Forgiving camera search: typos, spelled-out words ("Northwest 13th Street"),
 // area names, and extra words that match nothing are all fine. Typos only count
@@ -98,7 +98,7 @@ function scorePart(part: string, cameraWords: string[][]) {
 }
 
 // Matching cameras, best first. An empty query returns every camera in order.
-export function searchCameras(cameras: Camera[], query: string): Camera[] {
+export function searchCameras<T extends CameraPlace>(cameras: T[], query: string): T[] {
   const parts = tokenize(query)
   if (!parts.length) return cameras
 

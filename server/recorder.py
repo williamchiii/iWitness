@@ -152,6 +152,10 @@ class CameraRecorder:
 
         self.output_directory.mkdir(parents=True, exist_ok=True)
         self._run_id = time.time_ns()
+        # FFmpeg only rewrites the segment list when its first segment
+        # closes. Until then the tracker would read the previous run's rows
+        # against this run's start time and date those segments in the future.
+        self.segment_list_path.unlink(missing_ok=True)
 
         try:
             # The log file is opened only to hand FFmpeg a descriptor to

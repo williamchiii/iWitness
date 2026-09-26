@@ -7,8 +7,10 @@ import Header from '../components/Header'
 import SignInDialog from '../components/SignInDialog'
 import Toast from '../components/Toast'
 import type { ToastMessage } from '../components/Toast'
-import { cameras } from '../lib/cameras'
+import { cameraNumber, placeCameras } from '../lib/cameras'
+import type { Camera } from '../lib/cameras'
 import { formatClockRange } from '../lib/format'
+import { api } from '../lib/api'
 import type { Incident } from '../lib/api/types'
 import { onUserChange, redirectError, signInWithGoogle, signOut } from '../lib/auth'
 import type { User } from '../lib/auth'
@@ -17,9 +19,12 @@ import { searchCameras } from '../lib/search'
 import { OUTLINE_PILL } from '../lib/styles'
 
 export default function HomePage() {
+  const [cameras, setCameras] = useState<Camera[] | null>(null)
+  const [camerasFailed, setCamerasFailed] = useState(false)
+  const [camerasAttempt, setCamerasAttempt] = useState(0)
   const [hoveredId, setHoveredId] = useState<string | null>(null)
   const [query, setQuery] = useState('')
-  const matches = useMemo(() => searchCameras(cameras, query), [query])
+  const matches = useMemo(() => searchCameras(cameras ?? [], query), [cameras, query])
   const ranks = useMemo(() => new Map(matches.map((c, i) => [c.id, i])), [matches])
   const matchIds = useMemo(() => new Set(ranks.keys()), [ranks])
   // An incident pressed before the Google redirect (or a reload) reopens its camera.
@@ -41,6 +46,21 @@ export default function HomePage() {
     [showToast],
   )
 
+  useEffect(() => {
+    let current = true
+    api
+      .listCameras()
+      .then((listed) => {
+        if (current) setCameras(placeCameras(listed))
+      })
+      .catch(() => {
+        if (current) setCamerasFailed(true)
+      })
+    return () => {
+      current = false
+    }
+  }, [camerasAttempt])
+
   useEffect(
     () =>
       onUserChange((next) => {
@@ -55,8 +75,7 @@ export default function HomePage() {
     clearPendingIncident()
   }
 
-  const selectedIndex = cameras.findIndex((c) => c.id === selectedId)
-  const selected = selectedIndex >= 0 ? cameras[selectedIndex] : undefined
+  const selected = cameras?.find((c) => c.id === selectedId)
   const activeId = hoveredId ?? selectedId
 
   return (
@@ -85,20 +104,43 @@ export default function HomePage() {
             )}
           </div>
           <div className="mt-6">
-            <CameraList
-              cameras={cameras}
-              ranks={ranks}
-              activeId={activeId}
-              onHover={setHoveredId}
-              onSelect={setSelectedId}
-            />
-            {matches.length === 0 && <p className="text-sm text-muted">No cameras match "{query.trim()}".</p>}
+            {camerasFailed ? (
+              <div className="flex flex-wrap items-center justify-between gap-4 text-sm">
+                <p className="text-muted">Could not load cameras.</p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCamerasFailed(false)
+                    setCamerasAttempt((n) => n + 1)
+                  }}
+                  className={OUTLINE_PILL}
+                >
+                  Try again
+                </button>
+              </div>
+            ) : cameras === null ? (
+              <p className="text-sm text-muted">Loading cameras...</p>
+            ) : (
+              <>
+                <CameraList
+                  cameras={cameras}
+                  ranks={ranks}
+                  activeId={activeId}
+                  onHover={setHoveredId}
+                  onSelect={setSelectedId}
+                />
+                {cameras.length === 0 && <p className="text-sm text-muted">No cameras are available right now.</p>}
+                {cameras.length > 0 && matches.length === 0 && (
+                  <p className="text-sm text-muted">No cameras match "{query.trim()}".</p>
+                )}
+              </>
+            )}
           </div>
         </section>
         {/* z-0 seals Leaflet's internal z-indexes (panes 400, controls 1000) into their own stacking context. */}
         <section className="relative z-0 h-[50vh] border-t border-line md:absolute md:inset-0 md:h-auto md:border-t-0">
           <CameraMap
-            cameras={cameras}
+            cameras={cameras ?? []}
             activeId={activeId}
             matchIds={matchIds}
             selected={selected}
@@ -111,7 +153,7 @@ export default function HomePage() {
         <CameraModal
           key={selected.id}
           camera={selected}
-          number={selectedIndex + 1}
+          number={cameraNumber(selected.id)}
           signedIn={user !== null}
           onSignIn={signInWithGoogle}
           onClose={closeCamera}

@@ -6,7 +6,7 @@
 // account, so "ownership" here just means "signed in" — see ApiClient's
 // doc comment.
 
-import { cameras as cameraCatalog } from '../cameras'
+import { cameraPlaces } from '../cameras'
 import type { ApiClient } from './client'
 import { ApiError } from './client'
 import type { BufferInfo, Camera, Incident, Playback, StartTripResponse, Trip, User } from './types'
@@ -76,7 +76,7 @@ export class MockApiClient implements ApiClient {
 
   async listCameras(): Promise<Camera[]> {
     await delay()
-    return cameraCatalog.map((camera) => ({
+    return cameraPlaces.map((camera) => ({
       id: camera.id,
       name: camera.name,
       location: camera.direction,
@@ -87,7 +87,7 @@ export class MockApiClient implements ApiClient {
 
   async startTrip(cameraId: string): Promise<StartTripResponse> {
     await delay()
-    if (!cameraCatalog.some((camera) => camera.id === cameraId)) {
+    if (!cameraPlaces.some((camera) => camera.id === cameraId)) {
       throw new ApiError(404, 'Camera not found')
     }
 
@@ -124,7 +124,7 @@ export class MockApiClient implements ApiClient {
   async reportIncident(tripId: string, tripToken: string, signedIn: boolean): Promise<Incident> {
     await delay()
     const stored = this.requireTrip(tripId, tripToken)
-    const camera = cameraCatalog.find((c) => c.id === stored.trip.camera_id)
+    const camera = cameraPlaces.find((c) => c.id === stored.trip.camera_id)
     const triggerAt = isoNow()
 
     const incident: Incident = {
