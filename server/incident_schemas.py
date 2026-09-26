@@ -41,3 +41,5 @@ class IncidentResponse(BaseModel):
     expires_at: datetime | None
     video_version: int
     error: str | None
+    # Signed link to a still from the clip; set only for the owner, once ready.
+    thumbnail_url: str | None = None

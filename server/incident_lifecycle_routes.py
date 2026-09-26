@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 
 from . import db
 from .auth import Principal, get_current_principal
+from .incident_playback_routes import signed_thumbnail_url
 from .incident_schemas import IncidentResponse
 
 
@@ -53,6 +54,16 @@ def _incident_from_row(row: tuple[object, ...]) -> IncidentResponse:
         expires_at=_as_utc(row[17]) if row[17] is not None else None,
         video_version=row[18],
         error=row[19],
+    )
+
+
+def _for_owner(incident: IncidentResponse, user_id: UUID) -> IncidentResponse:
+    """Add the owner-only thumbnail link once the clip is ready."""
+
+    if incident.processing_state != "ready":
+        return incident
+    return incident.model_copy(
+        update={"thumbnail_url": signed_thumbnail_url(incident.id, str(user_id))}
     )
 
 
@@ -226,7 +237,7 @@ def list_incidents(
         """,
         (user_id,),
     ).fetchall()
-    return [_incident_from_row(row) for row in rows]
+    return [_for_owner(_incident_from_row(row), user_id) for row in rows]
 
 
 @router.get("/incidents/{incident_id}", response_model=IncidentResponse)
@@ -241,7 +252,7 @@ def get_incident(
     row = _incident_row(connection, incident_id, user_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Incident not found")
-    return _incident_from_row(row)
+    return _for_owner(_incident_from_row(row), user_id)
 
 
 def _as_utc(value: datetime) -> datetime:
