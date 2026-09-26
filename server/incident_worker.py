@@ -9,7 +9,7 @@ from pathlib import Path
 import threading
 from typing import Any
 
-from . import db
+from . import db, media_cleanup
 from .config import SERVER_ROOT, settings
 from .incident_processor import IncidentProcessor
 
@@ -76,10 +76,12 @@ class IncidentWorker:
     def run_once(self) -> int:
         """Process one poll and return the number of incidents submitted."""
 
+        self._drain_media_cleanup()
         try:
             self._expire_abandoned()
         except Exception:
             logger.exception("Incident expiry poll failed")
+        self._drain_media_cleanup()
         incidents = self._recording_incidents()
         submitted = 0
         for incident in incidents:
@@ -93,6 +95,16 @@ class IncidentWorker:
             except Exception:
                 logger.exception("Incident worker failed for incident %s", incident.id)
         return submitted
+
+    def _drain_media_cleanup(self) -> None:
+        try:
+            media_cleanup.drain(
+                self.database,
+                server_root=SERVER_ROOT,
+                media_root=settings.cameras_root.parent,
+            )
+        except Exception:
+            logger.exception("Incident media cleanup poll failed")
 
     def _run(self) -> None:
         while not self._stop_event.is_set():
@@ -112,6 +124,8 @@ class IncidentWorker:
                 FROM incident
                 WHERE processing_state = 'recording'
                   AND claim_state <> 'expired'
+                  AND (claim_state <> 'unclaimed'
+                       OR expires_at IS NULL OR expires_at > now())
                 ORDER BY requested_end ASC, id ASC
                 """
             ).fetchall()
@@ -211,26 +225,23 @@ class IncidentWorker:
                 return
             storage_path = row[0]
             files_to_remove.extend(self._expired_clip_paths(str(incident_id), storage_path))
-            # Lock the segment rows before removing their database records. A
-            # new incident cannot acquire a link to one while it is deleted.
-            exclusive = connection.execute(
+            # Lock every linked segment, including shared ones, in a stable
+            # order. Concurrent expiries must serialize before changing links
+            # or recomputing the segment's owner and status.
+            linked = connection.execute(
                 """
                 SELECT s.id, s.file_path, s.camera_id
                 FROM segment AS s
                 JOIN incident_segment AS link ON link.segment_id = s.id
                 WHERE link.incident_id = %s
-                  AND NOT EXISTS (
-                      SELECT 1 FROM incident_segment AS other
-                      WHERE other.segment_id = s.id
-                        AND other.incident_id <> %s
-                  )
+                ORDER BY s.id
                 FOR UPDATE OF s
                 """,
-                (incident_id, incident_id),
+                (incident_id,),
             ).fetchall()
-            for segment_id, file_path, camera_id in exclusive:
-                # The candidate list may have been read before this row lock
-                # became available. Recheck links while the lock is held.
+            for segment_id, file_path, camera_id in linked:
+                # Recheck after acquiring the row lock. Another expiry may
+                # have removed its link while this transaction was waiting.
                 shared = connection.execute(
                     """
                     SELECT 1 FROM incident_segment
@@ -290,8 +301,12 @@ class IncidentWorker:
                     """,
                     ([row[0] for row in removed],),
                 )
-        for path in files_to_remove:
-            path.unlink(missing_ok=True)
+            media_cleanup.enqueue(
+                connection,
+                files_to_remove,
+                server_root=SERVER_ROOT,
+                media_root=settings.cameras_root.parent,
+            )
 
     @staticmethod
     def _segment_path(file_path: str, camera_id: str) -> Path:

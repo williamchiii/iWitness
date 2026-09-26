@@ -67,9 +67,13 @@ class _FakeDatabase:
         self.association_calls: list[tuple[Any, ...]] = []
         self.expiry_calls: list[str] = []
         self.expiry_query: str | None = None
+        self.recording_query: str | None = None
+        self.linked_query: str | None = None
         self.fail_commit_for = fail_commit_for
         self.delete_segment_returns = delete_segment_returns
         self._locked_incident: str | None = None
+        self.pending_paths: list[str] = []
+        self._staged_paths: list[str] = []
 
     def connect(self) -> "_FakeDatabase":
         return self
@@ -80,12 +84,23 @@ class _FakeDatabase:
     def __exit__(self, *_: object) -> None:
         if self.fail_commit_for is not None and self._locked_incident == self.fail_commit_for:
             self._locked_incident = None
+            self._staged_paths.clear()
             raise RuntimeError("simulated transaction failure")
+        self.pending_paths.extend(self._staged_paths)
+        self._staged_paths.clear()
         self._locked_incident = None
         return None
 
     def execute(self, query: str, params: tuple[Any, ...] = ()) -> _Result:
         normalized = " ".join(query.split()).lower()
+        if normalized.startswith("select file_path from pending_media_delete"):
+            return _Result(rows=[(path,) for path in self.pending_paths])
+        if normalized.startswith("insert into pending_media_delete"):
+            self._staged_paths.append(params[0])
+            return _Result()
+        if normalized.startswith("delete from pending_media_delete"):
+            self.pending_paths.remove(params[0])
+            return _Result()
         if normalized.startswith("select id from incident"):
             self.expiry_query = normalized
             return _Result(rows=[(row[0],) for row in self.expired])
@@ -93,6 +108,7 @@ class _FakeDatabase:
             self._locked_incident = str(params[0])
             return _Result(row=next(((row[1],) for row in self.expired if row[0] == params[0]), None))
         if normalized.startswith("select s.id, s.file_path"):
+            self.linked_query = normalized
             self.expiry_calls.append("select exclusive")
             return _Result(rows=self.exclusive)
         if normalized.startswith("select 1 from incident_segment"):
@@ -102,7 +118,13 @@ class _FakeDatabase:
             self.expiry_calls.append("delete segment")
             return _Result(row=(params[0],) if self.delete_segment_returns else None)
         if normalized.startswith("select id, camera_id"):
-            return _Result(rows=self.incidents)
+            self.recording_query = normalized
+            now = datetime.now(UTC)
+            return _Result(rows=[
+                row[:4] for row in self.incidents
+                if len(row) == 4 or row[4] != "unclaimed"
+                or row[5] is None or row[5] > now
+            ])
         if normalized.startswith("update segment"):
             self.preserve_calls.append(params)
             return _Result()
@@ -285,16 +307,24 @@ class IncidentWorkerTests(unittest.TestCase):
                 return super().execute(query, params)
 
         database = FailingExpiryDatabase(
-            [self.incidents[0]],
-            {"incident-ready": self.start + timedelta(seconds=20)},
+            [
+                (*self.incidents[0], "unclaimed", datetime.now(UTC) - timedelta(minutes=1)),
+                ("incident-claimed", "camera-demo", self.start,
+                 self.start + timedelta(seconds=20), "claimed", None),
+            ],
+            {
+                "incident-ready": self.start + timedelta(seconds=20),
+                "incident-claimed": self.start + timedelta(seconds=20),
+            },
         )
         processor = _Processor()
         with self.assertLogs(level="ERROR") as logs:
             submitted = IncidentWorker(database=database, processor=processor).run_once()
 
         self.assertEqual(submitted, 1)
-        self.assertEqual(processor.processed, ["incident-ready"])
+        self.assertEqual(processor.processed, ["incident-claimed"])
         self.assertIn("simulated expiry query failure", "\n".join(logs.output))
+        self.assertIn("expires_at > now()", database.recording_query)
 
     def test_commit_failure_preserves_segment_and_clip_files(self) -> None:
         with _workspace_directory() as root:
@@ -319,6 +349,33 @@ class IncidentWorkerTests(unittest.TestCase):
             self.assertTrue(segment.exists())
             self.assertTrue(clip.exists())
             self.assertIn("simulated transaction failure", "\n".join(logs.output))
+
+    def test_failed_clip_unlink_is_retried_on_next_poll(self) -> None:
+        with _workspace_directory() as root:
+            incident = root / "media" / "incidents" / "incident-expired"
+            incident.mkdir(parents=True)
+            clip = incident / "clip.mp4"
+            clip.write_bytes(b"video")
+            database = _FakeDatabase(
+                [], {}, expired=[("incident-expired", "media/incidents/incident-expired/clip.mp4")],
+            )
+            settings = SimpleNamespace(
+                cameras_root=root / "media" / "cameras",
+                incidents_root=root / "media" / "incidents",
+            )
+            worker = IncidentWorker(database=database, processor=_Processor())
+            with patch.object(worker_module, "SERVER_ROOT", root), patch.object(worker_module, "settings", settings):
+                with patch.object(Path, "unlink", side_effect=OSError("temporary disk failure")):
+                    with self.assertLogs(level="ERROR"):
+                        worker.run_once()
+                self.assertTrue(clip.exists())
+                self.assertIn("media/incidents/incident-expired/clip.mp4", database.pending_paths)
+
+                database.expired = []
+                worker.run_once()
+
+            self.assertFalse(clip.exists())
+            self.assertEqual(database.pending_paths, [])
 
     def test_guarded_delete_that_skips_segment_keeps_its_file(self) -> None:
         with _workspace_directory() as root:
@@ -358,6 +415,59 @@ class IncidentWorkerTests(unittest.TestCase):
 
             self.assertTrue(segment_file.exists())
             self.assertNotIn("delete segment", database.expiry_calls)
+
+    def test_shared_segment_is_recomputed_across_two_expiries(self) -> None:
+        class SharedExpiryDatabase(_FakeDatabase):
+            def __init__(self) -> None:
+                super().__init__(
+                    [], {}, expired=[("incident-a", None), ("incident-b", None)],
+                )
+                self.links = {"incident-a", "incident-b"}
+                self.owner = "incident-a"
+                self.owner_after_first: str | None = None
+                self.segment_exists = True
+
+            def execute(self, query: str, params: tuple[Any, ...] = ()) -> _Result:
+                normalized = " ".join(query.split()).lower()
+                if normalized.startswith("select s.id, s.file_path"):
+                    self.linked_query = normalized
+                    return _Result(rows=[
+                        ("segment-shared", "media/cameras/camera-demo/shared.ts", "camera-demo")
+                    ] if self.segment_exists and params[0] in self.links else [])
+                if normalized.startswith("select 1 from incident_segment"):
+                    return _Result(row=(1,) if self.links - {params[1]} else None)
+                if normalized.startswith("delete from segment"):
+                    self.segment_exists = False
+                    return _Result(row=(params[0],))
+                if normalized.startswith("delete from incident_segment"):
+                    self.links.remove(params[0])
+                    return _Result(rows=[("segment-shared",)])
+                if normalized.startswith("update segment as s"):
+                    if self.segment_exists:
+                        self.owner = min(self.links) if self.links else None
+                        if self.owner_after_first is None:
+                            self.owner_after_first = self.owner
+                    return _Result()
+                return super().execute(query, params)
+
+        with _workspace_directory() as root:
+            camera = root / "media" / "cameras" / "camera-demo"
+            camera.mkdir(parents=True)
+            segment_file = camera / "shared.ts"
+            segment_file.write_bytes(b"video")
+            database = SharedExpiryDatabase()
+            settings = SimpleNamespace(
+                cameras_root=root / "media" / "cameras",
+                incidents_root=root / "media" / "incidents",
+            )
+            with patch.object(worker_module, "SERVER_ROOT", root), patch.object(worker_module, "settings", settings):
+                IncidentWorker(database=database, processor=_Processor()).run_once()
+
+            self.assertIn("order by s.id for update of s", database.linked_query)
+            self.assertNotIn("not exists", database.linked_query)
+            self.assertEqual(database.owner_after_first, "incident-b")
+            self.assertFalse(database.segment_exists)
+            self.assertFalse(segment_file.exists())
 
     def test_expiry_recovers_assembling_incident_after_restart(self) -> None:
         database = _FakeDatabase([], {}, expired=[("incident-stale", None)])
