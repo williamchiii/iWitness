@@ -39,6 +39,19 @@ export function onUserChange(callback: (user: User | null) => void): () => void 
   }
 }
 
+// Stand-in token for the fake login. MockApiClient never reads it.
+const MOCK_ACCESS_TOKEN = 'mock-access-token'
+
+// The signed-in user's access token (a Supabase JWT) for `Authorization: Bearer`,
+// or null when logged out. Ask for it on each request instead of keeping a copy:
+// Supabase rotates it about every hour, and getSession refreshes an expired one.
+export async function getAccessToken(): Promise<string | null> {
+  if (!supabase) return mockUser ? MOCK_ACCESS_TOKEN : null
+  const { data, error } = await supabase.auth.getSession()
+  if (error) throw error
+  return data.session?.access_token ?? null
+}
+
 // Real sign-in leaves the page for Google and comes back to this URL, so anything
 // that must survive it (a pending incident) has to be in sessionStorage first.
 export async function signInWithGoogle() {
