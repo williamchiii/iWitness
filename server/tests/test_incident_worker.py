@@ -68,6 +68,7 @@ class _FakeDatabase:
         self.preserve_calls: list[tuple[Any, ...]] = []
         self.association_calls: list[tuple[Any, ...]] = []
         self.expiry_calls: list[str] = []
+        self.expiry_query: str | None = None
 
     def connect(self) -> "_FakeDatabase":
         return self
@@ -81,6 +82,7 @@ class _FakeDatabase:
     def execute(self, query: str, params: tuple[Any, ...] = ()) -> _Result:
         normalized = " ".join(query.split()).lower()
         if normalized.startswith("select id, storage_path"):
+            self.expiry_query = normalized
             return _Result(rows=self.expired)
         if normalized.startswith("select s.id, s.file_path"):
             self.expiry_calls.append("select exclusive")
@@ -259,6 +261,15 @@ class IncidentWorkerTests(unittest.TestCase):
 
             self.assertTrue(segment_file.exists())
             self.assertNotIn("delete segment", database.expiry_calls)
+
+    def test_expiry_recovers_assembling_incident_after_restart(self) -> None:
+        database = _FakeDatabase([], {}, expired=[("incident-stale", None)])
+
+        IncidentWorker(database=database, processor=_Processor()).run_once()
+
+        # The expiry query must include rows left in assembling by a crash.
+        self.assertNotIn("processing_state", database.expiry_query)
+        self.assertIn("expire", database.expiry_calls)
 
 
 if __name__ == "__main__":

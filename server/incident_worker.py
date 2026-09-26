@@ -191,7 +191,6 @@ class IncidentWorker:
                 SELECT id, storage_path
                 FROM incident
                 WHERE claim_state = 'unclaimed' AND expires_at <= now()
-                  AND processing_state <> 'assembling'
                 FOR UPDATE SKIP LOCKED
                 """
             ).fetchall()
