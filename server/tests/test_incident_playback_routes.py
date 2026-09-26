@@ -53,7 +53,9 @@ class _Connection:
         normalized = " ".join(query.split()).lower()
         self.statements.append(normalized)
         if normalized.startswith("select storage_path"):
-            return _Result(self.row if "video_version" in normalized else self.signed_row)
+            return _Result(
+                self.row if "video_version" in normalized else self.signed_row
+            )
         return _Result()
 
 
@@ -109,13 +111,14 @@ def _workspace_directory() -> object:
 class IncidentPlaybackRouteTests(unittest.TestCase):
     def test_playback_rejects_incident_until_ready(self) -> None:
         database = _Database(("media/incidents/incident/clip.mp4", "recording", 1))
-        with patch.object(routes, "db", database):
-            with self.assertRaises(HTTPException) as raised:
-                routes.get_incident_playback(
-                    INCIDENT_ID,
-                    _request("/incidents/playback"),
-                    _principal(),
-                )
+        with self.assertRaises(HTTPException) as raised:
+            routes.get_incident_playback(
+                INCIDENT_ID,
+                _request("/incidents/playback"),
+                _principal(),
+                connection=database.connection,
+                settings=routes.get_settings(),
+            )
         self.assertEqual(raised.exception.status_code, 409)
 
     def test_playback_issues_signed_stream_and_download_urls(self) -> None:
@@ -134,14 +137,14 @@ class IncidentPlaybackRouteTests(unittest.TestCase):
                 playback_url_seconds=300,
             )
             with (
-                patch.object(routes, "db", database),
-                patch.object(routes, "settings", runtime),
                 patch.object(routes, "SERVER_ROOT", root),
             ):
                 response = routes.get_incident_playback(
                     INCIDENT_ID,
                     _request("/incidents/playback"),
                     _principal(),
+                    connection=database.connection,
+                    settings=runtime,
                 )
 
                 stream_query = parse_qs(urlparse(response.playback_url).query)
@@ -151,6 +154,8 @@ class IncidentPlaybackRouteTests(unittest.TestCase):
                     exp=int(stream_query["exp"][0]),
                     sig=stream_query["sig"][0],
                     download=False,
+                    connection=database.connection,
+                    settings=runtime,
                 )
 
             self.assertEqual(response.video_version, 3)
@@ -166,34 +171,51 @@ class IncidentPlaybackRouteTests(unittest.TestCase):
             database = _Database((str(clip), "ready"))
             runtime = SimpleNamespace(incidents_root=root / "media" / "incidents")
             with (
-                patch.object(routes, "db", database),
-                patch.object(routes, "settings", runtime),
                 patch.object(routes, "SERVER_ROOT", root),
             ):
-                response = routes.delete_incident(INCIDENT_ID, _principal())
+                response = routes.delete_incident(
+                    INCIDENT_ID,
+                    _principal(),
+                    connection=database.connection,
+                    settings=runtime,
+                )
 
             self.assertIsInstance(response, Response)
             self.assertEqual(response.status_code, 204)
             self.assertFalse(clip.exists())
             self.assertTrue(
-                any(statement.startswith("update segment") for statement in database.connection.statements)
+                any(
+                    statement.startswith("update segment")
+                    for statement in database.connection.statements
+                )
             )
             self.assertTrue(
-                any(statement.startswith("delete from incident") for statement in database.connection.statements)
+                any(
+                    statement.startswith("delete from incident")
+                    for statement in database.connection.statements
+                )
             )
 
     def test_other_owner_receives_not_found(self) -> None:
         database = _Database(None)
-        with patch.object(routes, "db", database):
-            with self.assertRaises(HTTPException) as raised:
-                routes.delete_incident(INCIDENT_ID, _principal())
+        with self.assertRaises(HTTPException) as raised:
+            routes.delete_incident(
+                INCIDENT_ID,
+                _principal(),
+                connection=database.connection,
+                settings=routes.get_settings(),
+            )
         self.assertEqual(raised.exception.status_code, 404)
 
     def test_delete_rejects_clip_while_assembling(self) -> None:
         database = _Database((None, "assembling"))
-        with patch.object(routes, "db", database):
-            with self.assertRaises(HTTPException) as raised:
-                routes.delete_incident(INCIDENT_ID, _principal())
+        with self.assertRaises(HTTPException) as raised:
+            routes.delete_incident(
+                INCIDENT_ID,
+                _principal(),
+                connection=database.connection,
+                settings=routes.get_settings(),
+            )
         self.assertEqual(raised.exception.status_code, 409)
         self.assertFalse(
             any(

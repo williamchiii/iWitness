@@ -213,12 +213,12 @@ class IncidentLifecycleRouteTests(TestCase):
             ]
         )
 
-        with patch.object(lifecycle_routes.db, "connect", return_value=connection):
-            response = claim_incident(
-                INCIDENT_ID,
-                principal=_principal(),
-                x_trip_token=TRIP_TOKEN,
-            )
+        response = claim_incident(
+            INCIDENT_ID,
+            principal=_principal(),
+            x_trip_token=TRIP_TOKEN,
+            connection=connection,
+        )
 
         self.assertEqual(response.id, str(INCIDENT_ID))
         self.assertEqual(response.claim_state, "claimed")
@@ -235,26 +235,26 @@ class IncidentLifecycleRouteTests(TestCase):
     def test_missing_incident_returns_404(self) -> None:
         connection = _Connection([_Result(None)])
 
-        with patch.object(lifecycle_routes.db, "connect", return_value=connection):
-            with self.assertRaises(HTTPException) as raised:
-                claim_incident(
-                    INCIDENT_ID,
-                    principal=_principal(),
-                    x_trip_token=TRIP_TOKEN,
-                )
+        with self.assertRaises(HTTPException) as raised:
+            claim_incident(
+                INCIDENT_ID,
+                principal=_principal(),
+                x_trip_token=TRIP_TOKEN,
+                connection=connection,
+            )
 
         self.assertEqual(raised.exception.status_code, 404)
 
     def test_claim_rejects_wrong_trip_token(self) -> None:
         connection = _Connection([_Result(_trip_row())])
 
-        with patch.object(lifecycle_routes.db, "connect", return_value=connection):
-            with self.assertRaises(HTTPException) as raised:
-                claim_incident(
-                    INCIDENT_ID,
-                    principal=_principal(),
-                    x_trip_token="wrong-token",
-                )
+        with self.assertRaises(HTTPException) as raised:
+            claim_incident(
+                INCIDENT_ID,
+                principal=_principal(),
+                x_trip_token="wrong-token",
+                connection=connection,
+            )
 
         self.assertEqual(raised.exception.status_code, 403)
         self.assertEqual(len(connection.queries), 1)
@@ -270,13 +270,13 @@ class IncidentLifecycleRouteTests(TestCase):
             ]
         )
 
-        with patch.object(lifecycle_routes.db, "connect", return_value=connection):
-            with self.assertRaises(HTTPException) as raised:
-                claim_incident(
-                    INCIDENT_ID,
-                    principal=_principal(),
-                    x_trip_token=TRIP_TOKEN,
-                )
+        with self.assertRaises(HTTPException) as raised:
+            claim_incident(
+                INCIDENT_ID,
+                principal=_principal(),
+                x_trip_token=TRIP_TOKEN,
+                connection=connection,
+            )
 
         self.assertEqual(raised.exception.status_code, 410)
         self.assertEqual(len(connection.queries), 1)
@@ -284,46 +284,50 @@ class IncidentLifecycleRouteTests(TestCase):
     def test_second_claim_returns_409(self) -> None:
         connection = _Connection([_Result(_trip_row(claim_state="claimed"))])
 
-        with patch.object(lifecycle_routes.db, "connect", return_value=connection):
-            with self.assertRaises(HTTPException) as raised:
-                claim_incident(
-                    INCIDENT_ID,
-                    principal=_principal(),
-                    x_trip_token=TRIP_TOKEN,
-                )
+        with self.assertRaises(HTTPException) as raised:
+            claim_incident(
+                INCIDENT_ID,
+                principal=_principal(),
+                x_trip_token=TRIP_TOKEN,
+                connection=connection,
+            )
 
         self.assertEqual(raised.exception.status_code, 409)
 
     def test_explicitly_expired_incident_returns_410(self) -> None:
         connection = _Connection([_Result(_trip_row(claim_state="expired"))])
 
-        with patch.object(lifecycle_routes.db, "connect", return_value=connection):
-            with self.assertRaises(HTTPException) as raised:
-                claim_incident(
-                    INCIDENT_ID,
-                    principal=_principal(),
-                    x_trip_token=TRIP_TOKEN,
-                )
+        with self.assertRaises(HTTPException) as raised:
+            claim_incident(
+                INCIDENT_ID,
+                principal=_principal(),
+                x_trip_token=TRIP_TOKEN,
+                connection=connection,
+            )
 
         self.assertEqual(raised.exception.status_code, 410)
 
     def test_expiry_during_claim_returns_410(self) -> None:
         connection = _Connection(
             [
-                _Result(_trip_row(expires_at=datetime.now(timezone.utc) + timedelta(minutes=1))),
+                _Result(
+                    _trip_row(
+                        expires_at=datetime.now(timezone.utc) + timedelta(minutes=1)
+                    )
+                ),
                 _Result(),  # app_user upsert
                 _Result(None),  # expiry passes before the guarded UPDATE
                 _Result(("unclaimed", True)),
             ]
         )
 
-        with patch.object(lifecycle_routes.db, "connect", return_value=connection):
-            with self.assertRaises(HTTPException) as raised:
-                claim_incident(
-                    INCIDENT_ID,
-                    principal=_principal(),
-                    x_trip_token=TRIP_TOKEN,
-                )
+        with self.assertRaises(HTTPException) as raised:
+            claim_incident(
+                INCIDENT_ID,
+                principal=_principal(),
+                x_trip_token=TRIP_TOKEN,
+                connection=connection,
+            )
 
         self.assertEqual(raised.exception.status_code, 410)
         self.assertIn("expires_at <= clock_timestamp()", connection.queries[3][0])
@@ -332,8 +336,7 @@ class IncidentLifecycleRouteTests(TestCase):
         rows = [_incident_row(), _incident_row()]
         connection = _Connection([_Result(rows, many=True)])
 
-        with patch.object(lifecycle_routes.db, "connect", return_value=connection):
-            response = list_incidents(principal=_principal())
+        response = list_incidents(principal=_principal(), connection=connection)
 
         self.assertEqual(len(response), 2)
         self.assertEqual(connection.queries[0][1], (USER_ID,))
@@ -342,9 +345,10 @@ class IncidentLifecycleRouteTests(TestCase):
     def test_detail_returns_404_when_incident_is_not_owned(self) -> None:
         connection = _Connection([_Result(None)])
 
-        with patch.object(lifecycle_routes.db, "connect", return_value=connection):
-            with self.assertRaises(HTTPException) as raised:
-                get_incident(INCIDENT_ID, principal=_principal(OTHER_USER_ID))
+        with self.assertRaises(HTTPException) as raised:
+            get_incident(
+                INCIDENT_ID, principal=_principal(OTHER_USER_ID), connection=connection
+            )
 
         self.assertEqual(raised.exception.status_code, 404)
 

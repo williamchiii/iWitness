@@ -85,3 +85,9 @@ class Settings:
 
 
 settings = Settings.from_environment()
+
+
+def get_settings() -> Settings:
+    """Provide the current server settings for a request."""
+
+    return settings

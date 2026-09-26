@@ -1,4 +1,5 @@
 import psycopg
+from collections.abc import Iterator
 
 from .config import settings
 
@@ -15,3 +16,10 @@ def connect() -> psycopg.Connection:
     if not DATABASE_URL:
         raise RuntimeError("DATABASE_URL is not configured")
     return psycopg.connect(DATABASE_URL, connect_timeout=10)
+
+
+def get_db() -> Iterator[psycopg.Connection]:
+    """Provide one transaction-scoped connection for a request."""
+
+    with connect() as connection:
+        yield connection

@@ -3,7 +3,9 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, Request
+import psycopg
+from fastapi import Depends, FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from . import db
@@ -159,18 +161,26 @@ app.include_router(incident_lifecycle_router)
 app.include_router(incident_playback_router)
 
 
-@app.exception_handler(Exception)
-async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-    """Map any exception FastAPI doesn't already handle to the contract's error envelope."""
+@app.exception_handler(RequestValidationError)
+async def request_validation_error_handler(
+    _request: Request, _exc: RequestValidationError
+) -> JSONResponse:
+    """Return the contract's string detail without echoing request data."""
 
-    logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
+    return JSONResponse(status_code=400, content={"detail": "Malformed request"})
+
+
+@app.exception_handler(Exception)
+async def unexpected_error_handler(_request: Request, exc: Exception) -> JSONResponse:
+    """Hide internal failures from clients and keep exception data out of logs."""
+
+    logger.error("Unhandled request error (%s)", type(exc).__name__)
     return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 
 @app.get("/health")
-def health() -> dict[str, str]:
+def health(connection: psycopg.Connection = Depends(db.get_db)) -> dict[str, str]:
     """Report server and database health for uptime checks."""
 
-    with db.connect() as conn:
-        conn.execute("select 1")
+    connection.execute("select 1")
     return {"server": "healthy", "database": "healthy"}
