@@ -210,10 +210,14 @@ class IncidentProcessorTests(unittest.TestCase):
         self.assertEqual(database.incident_row[2], "recording")
 
     def test_missing_segment_marks_incident_failed(self) -> None:
-        path = "media/cameras/camera-demo/missing.ts"
+        # Two segments so the post-trigger window (15s) is covered and the
+        # incident actually gets claimed for assembly; one of them is missing.
+        present_path = "media/cameras/camera-demo/segment-a.ts"
+        missing_path = "media/cameras/camera-demo/missing.ts"
+        (self.root / present_path).write_bytes(b"segment")
         database = self._database(
             requested_end=self.start + timedelta(seconds=15),
-            file_paths=[path],
+            file_paths=[present_path, missing_path],
         )
 
         result = self._processor(database, lambda *_args, **_kwargs: None).process(
@@ -225,12 +229,17 @@ class IncidentProcessorTests(unittest.TestCase):
         self.assertEqual(database.incident_row[2], "failed")
 
     def test_path_traversal_marks_incident_failed(self) -> None:
+        # Two segments so the post-trigger window (15s) is covered and the
+        # incident actually gets claimed for assembly; one of them escapes
+        # the camera directory.
+        present_path = "media/cameras/camera-demo/segment-a.ts"
+        (self.root / present_path).write_bytes(b"segment")
         outside = self.root / "media" / "outside.ts"
         outside.parent.mkdir(parents=True, exist_ok=True)
         outside.write_bytes(b"outside")
         database = self._database(
             requested_end=self.start + timedelta(seconds=15),
-            file_paths=["media/cameras/camera-demo/../../outside.ts"],
+            file_paths=[present_path, "media/cameras/camera-demo/../../outside.ts"],
         )
 
         result = self._processor(database, lambda *_args, **_kwargs: None).process(
@@ -242,11 +251,17 @@ class IncidentProcessorTests(unittest.TestCase):
         self.assertTrue(outside.exists())
 
     def test_ffmpeg_failure_marks_incident_failed_and_removes_output(self) -> None:
-        path = "media/cameras/camera-demo/segment-a.ts"
-        (self.root / path).write_bytes(b"segment")
+        # Two segments so the post-trigger window (15s) is covered and the
+        # incident actually gets claimed for assembly.
+        paths = [
+            "media/cameras/camera-demo/segment-a.ts",
+            "media/cameras/camera-demo/segment-b.ts",
+        ]
+        for path in paths:
+            (self.root / path).write_bytes(b"segment")
         database = self._database(
             requested_end=self.start + timedelta(seconds=15),
-            file_paths=[path],
+            file_paths=paths,
         )
 
         def runner(command: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
