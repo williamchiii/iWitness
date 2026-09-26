@@ -152,9 +152,8 @@ def claim_incident(
         elif expires_at is not None and _as_utc(expires_at) <= datetime.now(
             timezone.utc
         ):
-            # The current schema requires a user_id for every non-unclaimed
-            # row. Refuse a late claim here; expiry cleanup is a separate
-            # operation and must not violate that constraint.
+            # Leave the row unclaimed so the incident worker can release its
+            # shared segment links and remove its clip during expiry cleanup.
             expired = True
         else:
             connection.execute(

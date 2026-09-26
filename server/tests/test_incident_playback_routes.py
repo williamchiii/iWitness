@@ -37,6 +37,9 @@ class _Result:
     def fetchone(self) -> object:
         return self.row
 
+    def fetchall(self) -> list[tuple[UUID]]:
+        return [(UUID("33333333-3333-3333-3333-333333333333"),)]
+
 
 class _Connection:
     def __init__(self, row: object, signed_row: object | None = None) -> None:

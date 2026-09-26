@@ -256,17 +256,34 @@ def delete_incident(
                     detail="Incident clip could not be deleted",
                 ) from exc
 
-        # Preserved source segments are part of the rolling camera buffer.
-        # Release them before deleting the incident so the segment check
-        # constraint remains valid and retention can manage them normally.
-        connection.execute(
+        # Shared segments must stay preserved for other incidents. Release
+        # only links owned by this incident, then select a remaining owner.
+        removed = connection.execute(
             """
-            UPDATE segment
-            SET status = 'temporary', incident_id = NULL
+            DELETE FROM incident_segment
             WHERE incident_id = %s
+            RETURNING segment_id
             """,
             (incident_id,),
-        )
+        ).fetchall()
+        if removed:
+            connection.execute(
+                """
+                UPDATE segment AS s
+                SET incident_id = (
+                        SELECT link.incident_id
+                        FROM incident_segment AS link
+                        WHERE link.segment_id = s.id
+                        ORDER BY link.incident_id LIMIT 1
+                    ),
+                    status = CASE WHEN EXISTS (
+                        SELECT 1 FROM incident_segment AS link
+                        WHERE link.segment_id = s.id
+                    ) THEN 'preserved' ELSE 'temporary' END
+                WHERE s.id = ANY(%s)
+                """,
+                ([item[0] for item in removed],),
+            )
         connection.execute(
             """
             DELETE FROM incident
