@@ -13,6 +13,7 @@ from pathlib import Path
 import subprocess
 import time
 
+from . import fl511
 from .config import settings
 from .schemas import SourceType
 
@@ -45,6 +46,10 @@ class CameraRecorder:
         self._process: subprocess.Popen[bytes] | None = None
         self._run_id = time.time_ns()
         self.started_at: datetime | None = None
+        # This run's FFmpeg input and the options that go before it; set by
+        # start(), since an FL511 stream needs a fresh token every run.
+        self._input = str(config.input_url)
+        self._input_options: list[str] = []
 
     @property
     def output_directory(self) -> Path:
@@ -93,11 +98,12 @@ class CameraRecorder:
         if self.config.source_type == "replay":
             # Replay a local file at normal speed and loop it for the demo.
             command.extend(["-re", "-stream_loop", "-1"])
+        command.extend(self._input_options)
 
         command.extend(
             [
                 "-i",
-                str(self.config.input_url),
+                self._input,
                 "-map",
                 "0:v:0",
                 "-an",
@@ -135,6 +141,29 @@ class CameraRecorder:
         )
         return command
 
+    def _resolve_input(self) -> None:
+        """Pick this run's FFmpeg input, fetching a fresh FL511 token if needed."""
+
+        input_url = str(self.config.input_url)
+        if not fl511.is_fl511_input(input_url):
+            self._input, self._input_options = input_url, []
+            return
+        self._input = fl511.resolve_stream_url(fl511.site_id(input_url))
+        self._input_options = [
+            *fl511.ffmpeg_input_options(),
+            # Exit instead of hanging if the stream stalls, so the
+            # supervisor restarts it with a new token.
+            "-rw_timeout",
+            "20000000",
+            # Start at the newest segment and read at real-time speed. The
+            # tracker turns FFmpeg's elapsed stream time into wall-clock
+            # time, which only holds if the stream isn't read faster than
+            # it plays; by default FFmpeg bursts through a backlog first.
+            "-live_start_index",
+            "-1",
+            "-re",
+        ]
+
     def start(self) -> subprocess.Popen[bytes]:
         """Create the output directory and start FFmpeg.
 
@@ -151,6 +180,7 @@ class CameraRecorder:
         # closes. Until then the tracker would read the previous run's rows
         # against this run's start time and date those segments in the future.
         self.segment_list_path.unlink(missing_ok=True)
+        self._resolve_input()
 
         try:
             # The log file is opened only to hand FFmpeg a descriptor to

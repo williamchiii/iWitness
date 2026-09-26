@@ -1,6 +1,5 @@
-import { SAMPLE_STREAM_URL } from '../lib/cameras'
 import type { Camera } from '../lib/cameras'
-import StreamPreview from './StreamPreview'
+import CameraSnapshot from './CameraSnapshot'
 
 interface Props {
   camera: Camera
@@ -21,8 +20,7 @@ export default function CameraCard({ camera, number, active, onHover, onSelect }
         active ? 'border-ink' : 'border-white/70 hover:border-white'
       }`}
     >
-      {/* Every camera stands in with the sample stream until the backend serves real buffers. */}
-      <StreamPreview src={SAMPLE_STREAM_URL} label="Sample" />
+      <CameraSnapshot src={camera.snapshot} />
       <div className="flex min-w-0 flex-col py-1">
         <p className="text-xs font-medium uppercase tracking-wider text-muted">Cam {number}</p>
         <p className="mt-1 text-lg font-medium tracking-tight">{camera.name}</p>
