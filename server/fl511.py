@@ -54,6 +54,13 @@ def site_id(input_url: str) -> int:
     return int(value)
 
 
+def ffmpeg_input_options() -> list[str]:
+    """FFmpeg options (before ``-i``) the DIVAS stream server requires."""
+
+    headers = "".join(f"{name}: {value}\r\n" for name, value in STREAM_HEADERS.items())
+    return ["-user_agent", USER_AGENT, "-headers", headers]
+
+
 def _fetch(request: Request, timeout: float) -> str:
     request.add_header("User-Agent", USER_AGENT)
     try:

@@ -149,12 +149,8 @@ class CameraRecorder:
             self._input, self._input_options = input_url, []
             return
         self._input = fl511.resolve_stream_url(fl511.site_id(input_url))
-        headers = "".join(f"{name}: {value}\r\n" for name, value in fl511.STREAM_HEADERS.items())
         self._input_options = [
-            "-user_agent",
-            fl511.USER_AGENT,
-            "-headers",
-            headers,
+            *fl511.ffmpeg_input_options(),
             # Exit instead of hanging if the stream stalls, so the
             # supervisor restarts it with a new token.
             "-rw_timeout",
