@@ -13,6 +13,7 @@ from .config import SERVER_ROOT, settings
 from .api import router
 from .incident_lifecycle_routes import router as incident_lifecycle_router
 from .incident_playback_routes import router as incident_playback_router
+from .profile_routes import router as profile_router
 from .incident_worker import IncidentWorker
 from .recorder import CameraRecorder, RecorderConfig
 from .retention import RetentionWorker
@@ -167,6 +168,7 @@ app = FastAPI(lifespan=lifespan)
 app.include_router(router)
 app.include_router(incident_lifecycle_router)
 app.include_router(incident_playback_router)
+app.include_router(profile_router)
 
 
 @app.exception_handler(RequestValidationError)
