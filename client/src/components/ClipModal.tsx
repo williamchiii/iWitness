@@ -5,6 +5,8 @@ import type { Incident, Playback } from '../lib/api/types'
 import { cameraNumber, cameraPlaces } from '../lib/cameras'
 import { downloadClip } from '../lib/clips'
 import { formatClock, formatClockRange, formatDay, formatDuration } from '../lib/format'
+import { POPUP_BACKDROP, POPUP_BACKDROP_OUT, POPUP_PANEL, POPUP_PANEL_OUT } from '../lib/styles'
+import { usePopupExit } from '../lib/usePopupExit'
 import { DownloadIcon, TrashIcon } from './ClipIcons'
 import ClipPlayer from './ClipPlayer'
 import DeleteClipDialog from './DeleteClipDialog'
@@ -35,6 +37,16 @@ export default function ClipModal({ incident, onClose, onDeleted }: Props) {
   const [downloadError, setDownloadError] = useState<string | null>(null)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
   const cancelDelete = useCallback(() => setConfirmingDelete(false), [])
+  const { closing, close } = usePopupExit()
+  const requestClose = useCallback(() => close(onClose), [close, onClose])
+  // The delete box has already animated out; remove it, then this popup follows.
+  const closeDeleted = useCallback(
+    (deleted: Incident) => {
+      setConfirmingDelete(false)
+      close(() => onDeleted(deleted))
+    },
+    [close, onDeleted],
+  )
   const camera = cameraPlaces.find((c) => c.id === incident.camera_id)
 
   useEffect(() => {
@@ -56,11 +68,11 @@ export default function ClipModal({ incident, onClose, onDeleted }: Props) {
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') onClose()
+      if (e.key === 'Escape') requestClose()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
+  }, [requestClose])
 
   async function download() {
     if (!playback) return
@@ -81,14 +93,18 @@ export default function ClipModal({ incident, onClose, onDeleted }: Props) {
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[2000] flex items-center justify-center bg-black/10 p-4 backdrop-blur-[2px]"
-      onClick={onClose}
+      className={`fixed inset-0 z-[2000] flex items-center justify-center bg-black/10 p-4 backdrop-blur-[2px] ${POPUP_BACKDROP} ${
+        closing ? POPUP_BACKDROP_OUT : ''
+      }`}
+      onClick={requestClose}
     >
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby="clip-title"
-        className="max-h-full w-full max-w-3xl overflow-y-auto rounded-xl border border-line bg-white pb-6 shadow-2xl"
+        className={`max-h-full w-full max-w-3xl overflow-y-auto rounded-xl border border-line bg-white pb-6 shadow-2xl ${POPUP_PANEL} ${
+          closing ? POPUP_PANEL_OUT : ''
+        }`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-4 px-6 pb-4 pt-5">
@@ -123,7 +139,7 @@ export default function ClipModal({ incident, onClose, onDeleted }: Props) {
             <button
               type="button"
               aria-label="Close"
-              onClick={onClose}
+              onClick={requestClose}
               className="grid size-9 shrink-0 place-items-center rounded-md border border-line text-muted transition-colors hover:text-ink"
             >
               <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
@@ -170,7 +186,7 @@ export default function ClipModal({ incident, onClose, onDeleted }: Props) {
           This camera may not show your vehicle. Footage gives context, not proof of fault.
         </p>
       </div>
-      {confirmingDelete && <DeleteClipDialog incident={incident} onCancel={cancelDelete} onDeleted={onDeleted} />}
+      {confirmingDelete && <DeleteClipDialog incident={incident} onCancel={cancelDelete} onDeleted={closeDeleted} />}
     </div>,
     document.body,
   )

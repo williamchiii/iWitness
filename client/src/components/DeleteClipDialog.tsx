@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { Incident } from '../lib/api/types'
 import { deleteClip } from '../lib/clips'
+import { usePopupExit } from '../lib/usePopupExit'
 import ConfirmDialog from './ConfirmDialog'
 
 interface Props {
@@ -11,10 +12,11 @@ interface Props {
 }
 
 // Asks before deleting a saved clip for good, then deletes it. Used by the
-// Library list and the clip popup.
+// Library list and the clip popup. The box animates out before either callback.
 export default function DeleteClipDialog({ incident, onCancel, onDeleted }: Props) {
   const [deleting, setDeleting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const { closing, close } = usePopupExit()
 
   async function remove() {
     setDeleting(true)
@@ -26,7 +28,7 @@ export default function DeleteClipDialog({ incident, onCancel, onDeleted }: Prop
       setDeleting(false)
       return
     }
-    onDeleted(incident)
+    close(() => onDeleted(incident))
   }
 
   return (
@@ -36,9 +38,10 @@ export default function DeleteClipDialog({ incident, onCancel, onDeleted }: Prop
       confirmLabel="Delete clip"
       busyLabel="Deleting..."
       busy={deleting}
+      closing={closing}
       error={error}
       onConfirm={remove}
-      onCancel={onCancel}
+      onCancel={() => close(onCancel)}
     />
   )
 }

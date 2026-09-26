@@ -3,6 +3,8 @@ import type { Camera } from '../lib/cameras'
 import { api } from '../lib/api'
 import type { Incident, StartTripResponse } from '../lib/api/types'
 import { readPendingIncident } from '../lib/pendingIncident'
+import { POPUP_BACKDROP, POPUP_BACKDROP_OUT, POPUP_PANEL, POPUP_PANEL_OUT } from '../lib/styles'
+import { usePopupExit } from '../lib/usePopupExit'
 import IncidentPanel from './IncidentPanel'
 import Player from './Player'
 
@@ -70,10 +72,11 @@ export default function CameraModal({ camera, number, signedIn, onSignIn, onClos
   // can unmount before it knows whether the incident needs to be kept.
   const unsaved = busy || (incident !== null && incident.claim_state !== 'claimed')
 
+  const { closing, close } = usePopupExit()
   const requestClose = useCallback(() => {
     if (unsaved && !window.confirm('Leave without saving? Footage you have not saved will be deleted.')) return
-    onClose()
-  }, [unsaved, onClose])
+    close(onClose)
+  }, [unsaved, onClose, close])
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -86,14 +89,18 @@ export default function CameraModal({ camera, number, signedIn, onSignIn, onClos
 
   return (
     <div
-      className="fixed inset-0 z-[2000] flex items-center justify-center bg-black/20 p-4 backdrop-blur-md"
+      className={`fixed inset-0 z-[2000] flex items-center justify-center bg-black/20 p-4 backdrop-blur-md ${POPUP_BACKDROP} ${
+        closing ? POPUP_BACKDROP_OUT : ''
+      }`}
       onClick={requestClose}
     >
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby="camera-title"
-        className="max-h-full w-full max-w-3xl overflow-y-auto rounded-xl border border-line bg-white pb-6 shadow-2xl"
+        className={`max-h-full w-full max-w-3xl overflow-y-auto rounded-xl border border-line bg-white pb-6 shadow-2xl ${POPUP_PANEL} ${
+          closing ? POPUP_PANEL_OUT : ''
+        }`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-4 px-6 pb-4 pt-5">
