@@ -72,10 +72,10 @@ class IncidentCreationTests(unittest.TestCase):
         connection = _Connection()
         with (
             patch.object(api, "_load_trip", return_value=trip),
-            patch.object(api.db, "connect", return_value=connection),
         ):
             response = api.create_incident(
                 TRIP_ID, x_trip_token="trip-token", principal=principal,
+                connection=connection, settings=api.get_settings(),
             )
 
         self.assertEqual(response.claim_state, "claimed")

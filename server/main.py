@@ -3,7 +3,8 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, Request
+import psycopg
+from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
@@ -191,9 +192,8 @@ async def unexpected_error_handler(_request: Request, exc: Exception) -> JSONRes
 
 
 @app.get("/health")
-def health() -> dict[str, str]:
+def health(connection: psycopg.Connection = Depends(db.get_db)) -> dict[str, str]:
     """Report server and database health for uptime checks."""
 
-    with db.connect() as conn:
-        conn.execute("select 1")
+    connection.execute("select 1")
     return {"server": "healthy", "database": "healthy"}
