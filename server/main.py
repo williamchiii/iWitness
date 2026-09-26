@@ -3,7 +3,9 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 
 try:
     from . import db
@@ -169,6 +171,24 @@ app = FastAPI(lifespan=lifespan)
 app.include_router(router)
 app.include_router(incident_lifecycle_router)
 app.include_router(incident_playback_router)
+
+
+@app.exception_handler(RequestValidationError)
+async def request_validation_error_handler(
+    _request: Request, _exc: RequestValidationError
+) -> JSONResponse:
+    """Return the contract's string detail without echoing request data."""
+
+    return JSONResponse(status_code=400, content={"detail": "Malformed request"})
+
+
+@app.exception_handler(Exception)
+async def unexpected_error_handler(_request: Request, exc: Exception) -> JSONResponse:
+    """Hide internal failures from clients and keep exception data out of logs."""
+
+    logger.error("Unhandled request error (%s)", type(exc).__name__)
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+
 
 @app.get("/health")
 def health() -> dict[str, str]:
