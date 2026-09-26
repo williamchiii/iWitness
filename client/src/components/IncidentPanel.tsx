@@ -11,6 +11,8 @@ interface Props {
   signedIn: boolean
   onSignIn: () => Promise<void>
   onIncident: (incident: Incident | null) => void
+  // Called once the incident is attached to the user's account.
+  onSaved: (incident: Incident) => void
   incident: Incident | null
 }
 
@@ -57,7 +59,7 @@ function Pending({ incident, signedIn, onLogIn }: { incident: Incident; signedIn
   )
 }
 
-export default function IncidentPanel({ cameraId, signedIn, onSignIn, onIncident, incident }: Props) {
+export default function IncidentPanel({ cameraId, signedIn, onSignIn, onIncident, onSaved, incident }: Props) {
   const [busy, setBusy] = useState(false)
   const [showLogIn, setShowLogIn] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
@@ -74,11 +76,13 @@ export default function IncidentPanel({ cameraId, signedIn, onSignIn, onIncident
 
   async function press() {
     setBusy(true)
+    setSaveError(null)
     const reported = await reportIncident(cameraId, signedIn)
     // The camera was closed while this was in flight: don't bring the incident back.
     if (!mounted.current) return
     if (!reported.saved) storePendingIncident(reported)
     onIncident(reported)
+    if (reported.saved) onSaved(reported)
     setBusy(false)
     if (!reported.saved) setShowLogIn(true)
   }
@@ -93,12 +97,13 @@ export default function IncidentPanel({ cameraId, signedIn, onSignIn, onIncident
       .then((saved) => {
         clearPendingIncident()
         onIncident(saved)
+        onSaved(saved)
       })
       .catch(() => setSaveError('Could not save this incident.'))
       .finally(() => {
         saving.current = false
       })
-  }, [signedIn, incident, onIncident, saveAttempt])
+  }, [signedIn, incident, onIncident, onSaved, saveAttempt])
 
   return (
     <div className="mt-1 px-6">
@@ -113,10 +118,11 @@ export default function IncidentPanel({ cameraId, signedIn, onSignIn, onIncident
         <button
           type="button"
           onClick={press}
-          disabled={busy || incident !== null}
+          // A logged-out save waits for login before another can start; saved ones don't block.
+          disabled={busy || (incident !== null && !incident.saved)}
           className="rounded-md bg-rec px-5 py-3 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-40"
         >
-          {busy ? 'Saving...' : 'Save recording'}
+          {busy ? 'Saving...' : incident?.saved ? 'Save another' : 'Save recording'}
         </button>
       </div>
 
@@ -136,16 +142,6 @@ export default function IncidentPanel({ cameraId, signedIn, onSignIn, onIncident
           >
             Try again
           </button>
-        </div>
-      )}
-
-      {incident?.saved && (
-        <div className="mt-4 rounded-lg border border-line bg-surface p-4 text-sm">
-          <p className="font-medium">Saved to your account.</p>
-          <p className="mt-1 text-muted">
-            Pressed at <span className="tabular-nums">{formatClock(incident.triggerAt)}</span>. It will appear in your
-            Library when the clip is ready.
-          </p>
         </div>
       )}
 

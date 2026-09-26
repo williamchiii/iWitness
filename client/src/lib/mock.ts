@@ -5,6 +5,10 @@ export interface Incident {
   id: string
   cameraId: string
   triggerAt: number
+  // The window the clip covers: CLIP_BEFORE_SECONDS before the press to
+  // CLIP_AFTER_SECONDS after (requested_start / requested_end in the API contract).
+  requestedStart: number
+  requestedEnd: number
   // Unsaved footage is deleted after this time. Null once saved to an account.
   expiresAt: number | null
   saved: boolean
@@ -28,6 +32,8 @@ export async function reportIncident(cameraId: string, signedIn: boolean): Promi
     id: crypto.randomUUID(),
     cameraId,
     triggerAt,
+    requestedStart: triggerAt - CLIP_BEFORE_SECONDS * 1000,
+    requestedEnd: triggerAt + CLIP_AFTER_SECONDS * 1000,
     expiresAt: signedIn ? null : triggerAt + CLAIM_WINDOW_MS,
     saved: signedIn,
   }

@@ -12,9 +12,10 @@ interface Props {
   signedIn: boolean
   onSignIn: () => Promise<void>
   onClose: () => void
+  onSaved: (incident: Incident) => void
 }
 
-export default function CameraModal({ camera, number, signedIn, onSignIn, onClose }: Props) {
+export default function CameraModal({ camera, number, signedIn, onSignIn, onClose, onSaved }: Props) {
   // Resume an incident pressed on this camera before the Google redirect or a reload.
   const [incident, setIncident] = useState<Incident | null>(() => {
     const pending = readPendingIncident()
@@ -74,6 +75,7 @@ export default function CameraModal({ camera, number, signedIn, onSignIn, onClos
           cameraId={camera.id}
           signedIn={signedIn}
           onSignIn={onSignIn}
+          onSaved={onSaved}
           incident={incident}
           onIncident={setIncident}
         />

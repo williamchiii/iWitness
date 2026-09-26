@@ -12,6 +12,15 @@ export function formatClock(ms: number) {
   })
 }
 
+// "7:54:40 to 7:55:55 AM EDT", naming AM/PM and the zone once when both ends share them.
+export function formatClockRange(startMs: number, endMs: number) {
+  const start = formatClock(startMs)
+  const end = formatClock(endMs)
+  const suffix = / [AP]M \S+$/
+  const shared = start.match(suffix)?.[0]
+  return shared && shared === end.match(suffix)?.[0] ? `${start.slice(0, -shared.length)} to ${end}` : `${start} to ${end}`
+}
+
 // 60 -> "1 minute", 120 -> "2 minutes", 15 -> "15 seconds".
 export function formatSpan(seconds: number) {
   if (seconds % 60 === 0) {

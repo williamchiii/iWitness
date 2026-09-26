@@ -1,10 +1,14 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import CameraList from '../components/CameraList'
 import CameraMap from '../components/CameraMap'
 import CameraModal from '../components/CameraModal'
 import Header from '../components/Header'
 import SignInDialog from '../components/SignInDialog'
+import Toast from '../components/Toast'
+import type { ToastMessage } from '../components/Toast'
 import { cameras } from '../lib/cameras'
+import { formatClockRange } from '../lib/format'
+import type { Incident } from '../lib/mock'
 import { onUserChange, redirectError, signInWithGoogle, signOut } from '../lib/auth'
 import type { User } from '../lib/auth'
 import { clearPendingIncident, readPendingIncident } from '../lib/pendingIncident'
@@ -21,7 +25,20 @@ export default function HomePage() {
   const [selectedId, setSelectedId] = useState<string | null>(() => readPendingIncident()?.cameraId ?? null)
   const [user, setUser] = useState<User | null>(null)
   const [showSignIn, setShowSignIn] = useState(false)
-  const [notice, setNotice] = useState<string | null>(redirectError)
+  // Sign-in cancelled at Google, or a failed log out, shows on load as a toast.
+  const [toast, setToast] = useState<ToastMessage | null>(() => (redirectError ? { id: 0, title: redirectError } : null))
+  const dismissToast = useCallback(() => setToast(null), [])
+  const showToast = useCallback((message: Omit<ToastMessage, 'id'>) => setToast({ ...message, id: Date.now() }), [])
+  const showSaved = useCallback(
+    (incident: Incident) =>
+      showToast({
+        tone: 'success',
+        title: 'Saved to your Library',
+        body: `Recording from ${formatClockRange(incident.requestedStart, incident.requestedEnd)}.`,
+        link: { href: '/saved', label: 'View' },
+      }),
+    [showToast],
+  )
 
   useEffect(
     () =>
@@ -51,7 +68,7 @@ export default function HomePage() {
           if (matches.length) setSelectedId(matches[0].id)
         }}
         onLogIn={() => setShowSignIn(true)}
-        onLogOut={() => signOut().catch(() => setNotice('Could not log out. Check your connection and try again.'))}
+        onLogOut={() => signOut().catch(() => showToast({ title: 'Could not log out.', body: 'Check your connection and try again.' }))}
       />
       <main className="flex h-full min-h-0 flex-col">
         {/* Desktop: the list floats over a full-bleed map. Mobile: they stack. */}
@@ -96,19 +113,10 @@ export default function HomePage() {
           signedIn={user !== null}
           onSignIn={signInWithGoogle}
           onClose={closeCamera}
+          onSaved={showSaved}
         />
       )}
-      {notice && (
-        <div
-          role="status"
-          className="fixed bottom-6 left-1/2 z-[2500] flex w-[calc(100%-2rem)] max-w-md -translate-x-1/2 items-center justify-between gap-4 rounded-lg border border-line bg-white px-4 py-3 text-sm shadow-lg"
-        >
-          <span>{notice}</span>
-          <button type="button" onClick={() => setNotice(null)} className="shrink-0 text-muted hover:text-ink">
-            Dismiss
-          </button>
-        </div>
-      )}
+      {toast && <Toast key={toast.id} toast={toast} onDismiss={dismissToast} />}
       {showSignIn && <SignInDialog onSignIn={signInWithGoogle} onClose={() => setShowSignIn(false)} />}
     </div>
   )

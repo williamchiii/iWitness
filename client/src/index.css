@@ -109,3 +109,13 @@ body {
     background: rgb(255 255 255 / 0.95);
   }
 }
+
+/* Toast countdown line (components/Toast.tsx). */
+@keyframes toast-countdown {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
+  }
+}
