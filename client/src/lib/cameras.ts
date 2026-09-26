@@ -19,6 +19,24 @@ export const cameras: Camera[] = [
   { id: 'fl511-736', name: 'I-95 at SW 26th Rd', direction: 'Southbound', lat: 25.75234, lng: -80.20623 },
 ]
 
+// Cam numbers follow the list order above and stay fixed while the list is filtered.
+export function cameraNumber(id: string) {
+  return cameras.findIndex((c) => c.id === id) + 1
+}
+
+// "cam 3" picks camera 3 exactly. Otherwise every word typed must start a word
+// in the camera's number, name or direction ("sw 8" finds SW 8th St).
+export function matchesQuery(camera: Camera, query: string) {
+  const q = query.trim().toLowerCase()
+  const number = q.match(/^cam\s*(\d+)$/)
+  if (number) return cameraNumber(camera.id) === Number(number[1])
+  const words = `cam ${cameraNumber(camera.id)} ${camera.name} ${camera.direction}`.toLowerCase().split(/[\s-]+/)
+  return q
+    .split(/[\s-]+/)
+    .filter(Boolean)
+    .every((part) => words.some((word) => word.startsWith(part)))
+}
+
 // Public live test stream (Unified Streaming demo) with a burned-in clock and a
 // ~10 min rewind window. Stands in for a camera's loop buffer until the backend serves one.
 export const SAMPLE_STREAM_URL = 'https://demo.unified-streaming.com/k8s/live/stable/live.isml/.m3u8'

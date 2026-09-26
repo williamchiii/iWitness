@@ -2,6 +2,7 @@ import L from 'leaflet'
 import type { LatLngBounds } from 'leaflet'
 import { useEffect, useMemo, useRef } from 'react'
 import { MapContainer, Marker, TileLayer, Tooltip, ZoomControl, useMap } from 'react-leaflet'
+import { cameraNumber } from '../lib/cameras'
 import type { Camera } from '../lib/cameras'
 import { CAMERA_SVG } from '../lib/icons'
 
@@ -57,12 +58,14 @@ function Focus({ camera, bounds }: { camera: Camera | undefined; bounds: LatLngB
 interface Props {
   cameras: Camera[]
   activeId: string | null
+  // Cameras matching the search; the rest fade out but stay on the map.
+  matchIds: Set<string>
   selected: Camera | undefined
   onHover: (id: string | null) => void
   onSelect: (id: string) => void
 }
 
-export default function CameraMap({ cameras, activeId, selected, onHover, onSelect }: Props) {
+export default function CameraMap({ cameras, activeId, matchIds, selected, onHover, onSelect }: Props) {
   const bounds = useMemo(() => L.latLngBounds(cameras.map((c) => [c.lat, c.lng])), [cameras])
 
   return (
@@ -73,12 +76,13 @@ export default function CameraMap({ cameras, activeId, selected, onHover, onSele
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
       />
       <ZoomControl position="bottomright" />
-      {cameras.map((camera, i) => (
+      {cameras.map((camera) => (
         <Marker
           key={camera.id}
           position={[camera.lat, camera.lng]}
           icon={activeId === camera.id ? PIN_ACTIVE : PIN}
           zIndexOffset={activeId === camera.id ? 1000 : 0}
+          opacity={matchIds.has(camera.id) ? 1 : 0.3}
           eventHandlers={{
             click: () => onSelect(camera.id),
             mouseover: () => onHover(camera.id),
@@ -86,7 +90,7 @@ export default function CameraMap({ cameras, activeId, selected, onHover, onSele
           }}
         >
           <Tooltip direction="top" offset={[0, -18]} className="cam-tooltip">
-            Cam {i + 1}: {camera.name}
+            Cam {cameraNumber(camera.id)}: {camera.name}
           </Tooltip>
         </Marker>
       ))}
