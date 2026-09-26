@@ -1,8 +1,9 @@
 import { MapContainer, TileLayer } from 'react-leaflet'
 
-// South Florida from Broward down to Homestead, so the coast frames the content.
-const CENTER: [number, number] = [25.82, -80.3]
-const ZOOM = 10
+// Downtown Miami, where the cameras are, with Doral, Coral Gables, Miami Beach
+// and Key Biscayne around the panel.
+const CENTER: [number, number] = [25.79, -80.21]
+const ZOOM = 12
 
 // A still, faded map of South Florida behind a page's content: every
 // interaction is off, so it reads as a backdrop rather than a map to use.
