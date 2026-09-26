@@ -1,5 +1,5 @@
 import type { Camera } from '../lib/cameras'
-import CameraSnapshot from './CameraSnapshot'
+import Thumbnail from './Thumbnail'
 
 interface Props {
   camera: Camera
@@ -20,7 +20,7 @@ export default function CameraCard({ camera, number, active, onHover, onSelect }
         active ? 'border-ink' : 'border-white/70 hover:border-white'
       }`}
     >
-      <CameraSnapshot src={camera.snapshot} />
+      <Thumbnail src={camera.snapshot} label="Snapshot" className="w-56" />
       <div className="flex min-w-0 flex-col py-1">
         <p className="text-xs font-medium uppercase tracking-wider text-muted">Cam {number}</p>
         <p className="mt-1 text-lg font-medium tracking-tight">{camera.name}</p>

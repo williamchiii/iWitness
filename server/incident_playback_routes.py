@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 import hashlib
 import hmac
 from pathlib import Path
+import subprocess
+import tempfile
 import time
 from urllib.parse import urlencode
 from uuid import UUID
@@ -22,6 +24,11 @@ from .config import SERVER_ROOT, Settings, get_settings
 
 
 router = APIRouter()
+
+# A still from each ready clip for the Library, made on first request and kept
+# next to the clip.
+THUMBNAIL_NAME = "thumbnail.jpg"
+THUMBNAIL_WIDTH = 480
 
 
 class PlaybackResponse(BaseModel):
@@ -133,6 +140,91 @@ def _signed_clip_url(
     return str(request.base_url).rstrip("/") + path
 
 
+def signed_thumbnail_url(
+    incident_id: UUID | str,
+    user_id: str,
+    settings: Settings | None = None,
+) -> str:
+    """Return a short-lived link to a ready clip's still that only its owner can use.
+
+    The expiry is rounded up to a whole window, so every list within a window
+    gets the same link and the browser reuses its cached image. The link is
+    valid for one to two windows.
+    """
+
+    settings = settings or get_settings()
+    window = settings.playback_url_seconds
+    expires = (int(time.time()) // window + 2) * window
+    signature = _signature(
+        f"incident|{incident_id}|{user_id}|thumbnail",
+        expires,
+        settings,
+    )
+    query = urlencode({"uid": user_id, "exp": expires, "sig": signature})
+    # Relative: the browser loads it from the same origin as the API.
+    return f"/playback/incidents/{incident_id}/thumbnail?{query}"
+
+
+def _thumbnail_offset(
+    trigger_at: datetime | None,
+    actual_start: datetime | None,
+    duration_seconds: float | None,
+) -> float:
+    """Seconds into the clip to take the still: the press, else the middle."""
+
+    if trigger_at is not None and actual_start is not None:
+        offset = (trigger_at - actual_start).total_seconds()
+    else:
+        offset = (duration_seconds or 0) / 2
+    if duration_seconds:
+        offset = min(offset, max(duration_seconds - 0.5, 0))
+    return max(offset, 0.0)
+
+
+def _make_thumbnail(clip: Path, thumbnail: Path, offset: float, settings: Settings) -> None:
+    """Save one scaled JPEG frame of ``clip`` as ``thumbnail``."""
+
+    # A unique temporary name, so two first requests can't write one file.
+    with tempfile.NamedTemporaryFile(
+        dir=thumbnail.parent, prefix="thumbnail.", suffix=".jpg", delete=False
+    ) as handle:
+        partial = Path(handle.name)
+    try:
+        subprocess.run(
+            [
+                settings.ffmpeg_binary,
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-ss",
+                f"{offset:.3f}",
+                "-i",
+                str(clip),
+                "-frames:v",
+                "1",
+                "-vf",
+                f"scale={THUMBNAIL_WIDTH}:-2",
+                "-q:v",
+                "4",
+                str(partial),
+            ],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            check=True,
+            timeout=20,
+        )
+        if partial.stat().st_size == 0:
+            raise OSError("FFmpeg wrote an empty thumbnail")
+        partial.replace(thumbnail)
+    except (OSError, subprocess.SubprocessError) as exc:
+        partial.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=500,
+            detail="Incident thumbnail could not be made",
+        ) from exc
+
+
 @router.get(
     "/incidents/{incident_id}/playback",
     response_model=PlaybackResponse,
@@ -229,6 +321,46 @@ def serve_incident_clip(
     return FileResponse(path, media_type="video/mp4", headers=headers)
 
 
+@router.get("/playback/incidents/{incident_id}/thumbnail")
+def serve_incident_thumbnail(
+    incident_id: UUID,
+    uid: str = Query(...),
+    exp: int = Query(...),
+    sig: str = Query(...),
+    connection: psycopg.Connection = Depends(db.get_db),
+    settings: Settings = Depends(get_settings),
+) -> FileResponse:
+    """Serve a still from a ready clip after verifying its short-lived signature."""
+
+    _verify_signature(f"incident|{incident_id}|{uid}|thumbnail", exp, sig, settings)
+
+    row = connection.execute(
+        """
+        SELECT storage_path, user_id, processing_state,
+               trigger_at, actual_start, duration_seconds
+        FROM incident
+        WHERE id = %s
+        """,
+        (incident_id,),
+    ).fetchone()
+
+    if row is None or row[1] is None or str(row[1]) != uid:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    if row[2] != "ready":
+        raise HTTPException(status_code=409, detail="Incident clip is not ready")
+
+    clip = _safe_clip_path(incident_id, row[0], settings, require_file=True)
+    assert clip is not None
+    thumbnail = clip.with_name(THUMBNAIL_NAME)
+    if not thumbnail.is_file():
+        _make_thumbnail(clip, thumbnail, _thumbnail_offset(row[3], row[4], row[5]), settings)
+    return FileResponse(
+        thumbnail,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "private, max-age=300"},
+    )
+
+
 @router.delete("/incidents/{incident_id}", status_code=204)
 def delete_incident(
     incident_id: UUID,
@@ -256,6 +388,7 @@ def delete_incident(
     if clip_path is not None and clip_path.exists():
         try:
             clip_path.unlink()
+            clip_path.with_name(THUMBNAIL_NAME).unlink(missing_ok=True)
         except OSError as exc:
             raise HTTPException(
                 status_code=500,

@@ -109,6 +109,8 @@ interface Incident {
   expires_at: IsoTime | null     // only while unclaimed
   video_version: number          // bumps if the clip is replaced
   error: string | null
+  thumbnail_url: string | null   // JPEG still from the clip at the press; short-lived
+                                 // signed link, owner only. Null until ready.
 }
 
 interface Playback {
@@ -162,7 +164,7 @@ All require `Authorization`. Missing or invalid token returns 401.
 | `DELETE /incidents/{incident_id}` | none | `204 No Content` |
 
 - **Claim:** succeeds only with a valid access token plus the right trip token. First claim wins: a second claim returns 409, an expired one returns 410.
-- **List:** metadata only. The list page must not request playback for every row.
+- **List:** metadata only. The list page must not request playback for every row. It may load each row's `thumbnail_url`: a small image, not the clip. The link is relative to the API origin, signed, and valid for 5 to 10 minutes; load it as-is.
 - **Poll** `GET /incidents/{id}` every 2 to 3 seconds while `processing_state` is not `ready` or `failed`. No websockets for now.
 - **Delete** removes the stored clip and the incident row. Only the owner can delete; anyone else gets 404. Client clears that incident's cached playback URL.
 - **Playback** returns 409 until `processing_state` is `ready`. Cache the result per (user id, incident id, `video_version`) until shortly before `expires_at`; clear that cache on sign-out and account switch.
