@@ -114,7 +114,14 @@ async def lifespan(_: FastAPI):
             # A failure starting any one of these must not stop the other
             # permitted cameras from being tried.
             try:
-                recorder.start()
+                try:
+                    recorder.start()
+                except Exception:
+                    # A live feed can be briefly unreachable (network, token
+                    # service); its supervisor below keeps retrying it.
+                    if camera["source_type"] != "live":
+                        raise
+                    logger.exception("Could not start live camera %s yet; retrying", camera_id)
                 tracker.start()
                 retention_worker.start()
                 supervisor = RecorderSupervisor(
@@ -136,8 +143,9 @@ async def lifespan(_: FastAPI):
             trackers[camera_id] = tracker
             retention_workers[camera_id] = retention_worker
             supervisors[camera_id] = supervisor
-            _set_recording(camera_id, True)
-            logger.info("Started recorder for camera %s", camera_id)
+            _set_recording(camera_id, recorder.is_running)
+            if recorder.is_running:
+                logger.info("Started recorder for camera %s", camera_id)
 
         incident_worker.start()
         yield
