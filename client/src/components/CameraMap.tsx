@@ -17,9 +17,12 @@ function pin(active: boolean) {
 const PIN = pin(false)
 const PIN_ACTIVE = pin(true)
 const PADDING = 64
-const FOCUS_ZOOM = 14
+// Street level: the cameras are only about a kilometre apart.
+const FOCUS_ZOOM = 16
 // Width the floating camera list covers on the left at md and up: 36rem pane + 24px inset + 24px gap.
 const PANE_PX = 624
+// Room for the floating header pill at the top of the map on desktop.
+const HEADER_PX = 112
 
 // True once the list stops stacking above the map and starts floating over it.
 function paneOverlaps() {
@@ -28,7 +31,7 @@ function paneOverlaps() {
 
 function fitOptions() {
   return {
-    paddingTopLeft: [paneOverlaps() ? PANE_PX : PADDING, PADDING] as [number, number],
+    paddingTopLeft: (paneOverlaps() ? [PANE_PX, HEADER_PX] : [PADDING, PADDING]) as [number, number],
     paddingBottomRight: [PADDING, PADDING] as [number, number],
   }
 }
