@@ -55,6 +55,8 @@ class Settings:
 
     @classmethod
     def from_environment(cls) -> "Settings":
+        """Build settings from environment variables (and server/.env)."""
+
         return cls(
             database_url=os.getenv("DATABASE_URL"),
             media_root=_path_from_env("MEDIA_ROOT", "media"),

@@ -159,8 +159,10 @@ async def lifespan(_: FastAPI):
 app = FastAPI(lifespan=lifespan)
 app.include_router(router)
 
-@app.post("/health")
-def health():
+@app.get("/health")
+def health() -> dict[str, str]:
+    """Report server and database health for uptime checks."""
+
     with db.connect() as conn:
         conn.execute("select 1")
     return {"server": "healthy", "database": "healthy"}

@@ -107,6 +107,8 @@ def _safe_media_path(file_path: str) -> Path:
 
 @router.get("/cameras", response_model=list[CameraResponse])
 def list_cameras() -> list[CameraResponse]:
+    """List permitted cameras, newest recorder state included."""
+
     with db.connect() as connection:
         rows = connection.execute(
             """
@@ -131,6 +133,8 @@ def list_cameras() -> list[CameraResponse]:
 
 @router.post("/trips", response_model=StartTripResponse)
 def start_trip(request: StartTripRequest) -> StartTripResponse:
+    """Start an anonymous trip on a permitted camera and issue its token."""
+
     with db.connect() as connection:
         camera = connection.execute(
             """
@@ -164,6 +168,8 @@ def end_trip(
     trip_id: UUID,
     x_trip_token: str | None = Header(default=None, alias="X-Trip-Token"),
 ) -> TripResponse:
+    """End a trip. The camera's loop buffer keeps recording regardless."""
+
     if not x_trip_token:
         raise HTTPException(status_code=403, detail="Trip token required")
 
@@ -190,6 +196,8 @@ def get_buffer(
     request: Request,
     x_trip_token: str | None = Header(default=None, alias="X-Trip-Token"),
 ) -> BufferInfoResponse:
+    """Return the camera's current loop window and a signed playlist URL."""
+
     if not x_trip_token:
         raise HTTPException(status_code=403, detail="Trip token required")
 
@@ -232,6 +240,8 @@ def buffer_playlist(
     exp: int = Query(...),
     sig: str = Query(...),
 ) -> PlainTextResponse:
+    """Build an HLS playlist covering the camera's whole current loop."""
+
     _verify_signature(f"playlist|{trip_id}|{camera_id}", exp, sig)
 
     with db.connect() as connection:
@@ -313,6 +323,8 @@ def playback_segment(
     exp: int = Query(...),
     sig: str = Query(...),
 ) -> FileResponse:
+    """Serve one segment file behind its own short-lived signed URL."""
+
     _verify_signature(f"segment|{segment_id}|{camera_id}", exp, sig)
 
     with db.connect() as connection:
