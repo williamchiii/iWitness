@@ -12,3 +12,7 @@ streams (`input_url = 'fl511:<site id>'`, see `server/fl511.py`). Restart the
 backend after running it. To demo offline, save each feed with
 `python -m server.camera_sources capture` and switch with
 `python -m server.camera_sources use replay` (and `use live` to switch back).
+
+`005_media_deletion_queue.sql` keeps pending file removals in PostgreSQL so
+retention and incident expiry can retry them after a crash or filesystem error.
+Apply it before starting a backend that uses the deletion queue.
