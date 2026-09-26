@@ -9,6 +9,7 @@ from typing import Any
 from unittest import TestCase
 from unittest.mock import patch
 from uuid import UUID
+from fastapi import HTTPException
 
 os.environ.setdefault("PLAYBACK_SIGNING_SECRET", "incident-lifecycle-test-secret")
 
@@ -22,9 +23,6 @@ except ModuleNotFoundError:
 claim_incident = lifecycle_routes.claim_incident
 get_incident = lifecycle_routes.get_incident
 list_incidents = lifecycle_routes.list_incidents
-
-from fastapi import HTTPException
-
 
 INCIDENT_ID = UUID("11111111-1111-1111-1111-111111111111")
 TRIP_ID = UUID("22222222-2222-2222-2222-222222222222")
