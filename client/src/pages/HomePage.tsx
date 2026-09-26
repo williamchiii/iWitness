@@ -23,17 +23,18 @@ export default function HomePage() {
   const activeId = hoveredId ?? selectedId
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="relative h-full">
       <Header user={user} onLogIn={() => setShowSignIn(true)} onLogOut={() => setUser(null)} />
-      <main className="flex min-h-0 flex-1 flex-col md:grid md:grid-cols-2 md:grid-rows-[minmax(0,1fr)]">
-        <section className="min-h-0 overflow-y-auto px-6 py-8">
+      <main className="flex h-full min-h-0 flex-col">
+        {/* Desktop: the list floats over a full-bleed map. Mobile: they stack. */}
+        <section className="glass-pane z-10 min-h-0 overflow-y-auto px-6 pb-8 pt-24 md:absolute md:inset-y-6 md:left-6 md:w-[36rem] md:rounded-2xl md:border md:border-white/60 md:pb-6 md:pt-6">
           <h1 className="text-3xl font-medium tracking-tight">Cameras</h1>
-          <p className="mt-1 text-muted">I-95, Miami-Dade</p>
           <div className="mt-6">
             <CameraList cameras={cameras} activeId={activeId} onHover={setHoveredId} onSelect={setSelectedId} />
           </div>
         </section>
-        <section className="h-[50vh] border-t border-line md:h-auto md:border-l md:border-t-0">
+        {/* z-0 seals Leaflet's internal z-indexes (panes 400, controls 1000) into their own stacking context. */}
+        <section className="relative z-0 h-[50vh] border-t border-line md:absolute md:inset-0 md:h-auto md:border-t-0">
           <CameraMap
             cameras={cameras}
             activeId={activeId}

@@ -16,13 +16,13 @@ export default function CameraCard({ camera, number, active, onHover, onSelect }
       onClick={() => onSelect(camera.id)}
       onMouseEnter={() => onHover(camera.id)}
       onMouseLeave={() => onHover(null)}
-      className={`flex w-full gap-5 rounded-xl border bg-white p-3 text-left transition-colors ${
-        active ? 'border-ink' : 'border-line hover:border-neutral-400'
+      className={`glass-card flex w-full gap-5 rounded-xl border p-3 text-left transition-colors ${
+        active ? 'border-ink' : 'border-white/70 hover:border-white'
       }`}
     >
       {/* Feed placeholder until live video is wired up. */}
       <div
-        className="grid aspect-video w-56 shrink-0 place-items-center rounded-lg bg-surface text-neutral-400"
+        className="grid aspect-video w-56 shrink-0 place-items-center rounded-lg bg-black/5 text-neutral-500"
         dangerouslySetInnerHTML={{ __html: CAMERA_SVG }}
       />
       <div className="flex min-w-0 flex-col py-1">
