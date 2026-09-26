@@ -84,12 +84,20 @@ function IncidentCard({ incident, onOpen }: { incident: Incident; onOpen: () => 
   )
 }
 
-function SavedList() {
+function SavedList({ onDeleted }: { onDeleted: (incident: Incident) => void }) {
   const [incidents, setIncidents] = useState<Incident[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [attempt, setAttempt] = useState(0)
   const [openId, setOpenId] = useState<string | null>(null)
   const closeClip = useCallback(() => setOpenId(null), [])
+  const removeClip = useCallback(
+    (deleted: Incident) => {
+      setOpenId(null)
+      setIncidents((list) => list && list.filter((i) => i.id !== deleted.id))
+      onDeleted(deleted)
+    },
+    [onDeleted],
+  )
 
   useEffect(() => {
     let current = true
@@ -154,7 +162,7 @@ function SavedList() {
           </li>
         ))}
       </ul>
-      {open && <ClipModal key={open.id} incident={open} onClose={closeClip} />}
+      {open && <ClipModal key={open.id} incident={open} onClose={closeClip} onDeleted={removeClip} />}
     </>
   )
 }
@@ -166,6 +174,16 @@ export default function SavedIncidentsPage() {
   const [showSignIn, setShowSignIn] = useState(false)
   const [toast, setToast] = useState<ToastMessage | null>(null)
   const dismissToast = useCallback(() => setToast(null), [])
+  const showDeleted = useCallback(
+    (incident: Incident) =>
+      setToast({
+        id: Date.now(),
+        tone: 'success',
+        title: 'Clip deleted',
+        body: `${incident.camera_name}, saved at ${formatClock(Date.parse(incident.trigger_at))}.`,
+      }),
+    [],
+  )
 
   function logOut() {
     signOut().catch(() => setToast({ id: Date.now(), title: 'Could not log out.', body: 'Check your connection and try again.' }))
@@ -198,7 +216,7 @@ export default function SavedIncidentsPage() {
           )}
 
           {/* Keyed by account, so switching users never shows the previous one's list. */}
-          {ready && user && <SavedList key={user.email} />}
+          {ready && user && <SavedList key={user.email} onDeleted={showDeleted} />}
         </div>
       </main>
       {toast && <Toast key={toast.id} toast={toast} onDismiss={dismissToast} />}
