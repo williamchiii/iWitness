@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { SAMPLE_STREAM_URL } from '../lib/cameras'
 import type { Camera } from '../lib/cameras'
 import type { Incident } from '../lib/mock'
+import { readPendingIncident } from '../lib/pendingIncident'
 import IncidentPanel from './IncidentPanel'
 import Player from './Player'
 
@@ -14,7 +15,11 @@ interface Props {
 }
 
 export default function CameraModal({ camera, number, signedIn, onSignIn, onClose }: Props) {
-  const [incident, setIncident] = useState<Incident | null>(null)
+  // Resume an incident pressed on this camera before the Google redirect or a reload.
+  const [incident, setIncident] = useState<Incident | null>(() => {
+    const pending = readPendingIncident()
+    return pending?.cameraId === camera.id ? pending : null
+  })
   const unsaved = incident !== null && !incident.saved
 
   function requestClose() {

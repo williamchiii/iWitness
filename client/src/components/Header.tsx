@@ -1,10 +1,13 @@
-import type { User } from '../lib/mock'
+import type { User } from '../lib/auth'
 
 interface Props {
   user: User | null
   onLogIn: () => void
   onLogOut: () => void
 }
+
+const OUTLINE_PILL =
+  'shrink-0 rounded-full border border-ink/15 px-5 py-2 text-sm font-medium transition-colors hover:bg-white/70'
 
 // Floating pill centred over the map; the blurred tiles behind it are what frosts it.
 // The bar itself ignores pointer events so the map stays draggable either side of the pill.
@@ -13,18 +16,18 @@ export default function Header({ user, onLogIn, onLogOut }: Props) {
   // so the pill centres in the strip of map the pane leaves uncovered.
   return (
     <header className="pointer-events-none absolute inset-x-0 top-4 z-20 flex justify-center px-4 md:top-6 md:pl-[39rem] md:pr-6">
-      {/* Tracks the viewport up to max-w-5xl, so the pill stays proportional instead of hugging its content. */}
-      <nav className="glass-pill pointer-events-auto flex w-full max-w-lg items-center justify-between gap-4 rounded-full border border-white/60 p-2">
+      {/* Tracks the viewport up to max-w-xl, so the pill stays proportional instead of hugging its content. */}
+      <nav className="glass-pill pointer-events-auto flex w-full max-w-xl items-center justify-between gap-4 rounded-full border border-white/60 p-2">
         <span className="shrink-0 pl-3 text-lg font-semibold tracking-tight">iWitness</span>
-        <div className="flex min-w-0 items-center gap-3">
+        <div className="flex min-w-0 items-center gap-2">
           {user ? (
             <>
-              <span className="hidden max-w-56 truncate text-sm text-muted sm:block">{user.email}</span>
-              <button
-                type="button"
-                onClick={onLogOut}
-                className="shrink-0 rounded-full border border-ink/15 px-5 py-2 text-sm font-medium transition-colors hover:bg-white/70"
-              >
+              <span className="hidden min-w-0 truncate pr-1 text-sm text-muted sm:block">{user.name}</span>
+              {/* The page itself is built on its own branch. */}
+              <a href="/saved" className={OUTLINE_PILL}>
+                Library
+              </a>
+              <button type="button" onClick={onLogOut} className={OUTLINE_PILL}>
                 Log out
               </button>
             </>
