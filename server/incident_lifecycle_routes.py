@@ -178,7 +178,7 @@ def claim_incident(
                 SET user_id = %s, claim_state = 'claimed', expires_at = NULL
                 WHERE id = %s
                   AND claim_state = 'unclaimed'
-                  AND (expires_at IS NULL OR expires_at > now())
+                  AND (expires_at IS NULL OR expires_at > clock_timestamp())
                 RETURNING id
                 """,
                 (user_id, incident_id),
@@ -191,13 +191,15 @@ def claim_incident(
                 # lock as expected. Classify a concurrent claim consistently.
                 current = connection.execute(
                     """
-                    SELECT claim_state, expires_at
+                    SELECT claim_state, expires_at <= clock_timestamp()
                     FROM incident
                     WHERE id = %s
                     """,
                     (incident_id,),
                 ).fetchone()
-                if current is not None and str(current[0]) == "expired":
+                if current is not None and (
+                    str(current[0]) == "expired" or current[1] is True
+                ):
                     expired = True
 
     if expired:
