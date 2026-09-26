@@ -5,13 +5,13 @@
 **Track:** State Farm Auto Insurance Challenge  
 **Team:** Three people  
 **User:** A student driving without a personal dashcam  
-**One sentence:** iWitness keeps a dashcam style five hour loop recording of a permitted roadside camera stream during a trip, lets anyone watch and scrub back through it without an account, and saves incident video blocks to the student's private account after a Google sign in.
+**One sentence:** iWitness keeps a dashcam style five hour loop recording of five permitted FDOT cameras on the I-95 corridor in Miami-Dade County, lets anyone watch and scrub back through it without an account, and saves incident video blocks to the student's private account after a Google sign in.
 
 > **Hackathon rule:** The best code rarely wins. The best combination of working code, a clear story, and a memorable presentation does. Build toward one convincing live moment, then rehearse it.
 
 ## The idea
 
-FL511 lets people view traffic cameras but says its video and images are neither stored nor recorded. A driver involved in a crash may later wish a nearby camera view had been saved. iWitness demonstrates an opt in recording buffer for a roadside camera along the driver's trip. A manual incident trigger preserves recent video and makes it easy to play back or download.
+FL511 lets people view traffic cameras but says its video and images are neither stored nor recorded. A driver involved in a crash may later wish a nearby camera view had been saved. iWitness demonstrates an opt in recording buffer for five I-95 cameras in Miami-Dade County, recorded with FDOT's written permission. The student picks the camera along their trip. A manual incident trigger preserves recent video and makes it easy to play back or download.
 
 This MVP is **video preservation with account history**. It has no wet road classifier, weather warning, crash detector, fault estimator, claims chatbot, or insurer integration. The technical value is capturing a fleeting video source, maintaining a five hour loop buffer, and turning an incident trigger into a durable clip the student can find later in their account.
 
@@ -21,7 +21,7 @@ The State Farm connection is preparation for an accident and a simpler way to re
 
 Keep the main demo to about 75 seconds.
 
-1. Open iWitness signed out and start a simulated trip with one roadside camera. Its video plays in iWitness.
+1. Open iWitness signed out, pick one of the five I-95 cameras, and start a simulated trip. Its video plays in iWitness.
 2. Scrub the player back to show that the backend has been recording a loop buffer, including footage from before the current moment.
 3. Press **I was in an incident**. The app immediately preserves footage from before the press and starts recording a short period after it, then asks the student to sign in with Google to save it.
 4. After sign in, open **Saved Incidents**. The new incident appears as a video block with the camera name, source, actual recording window, and trigger time. Play it and scrub to footage from before the press.
@@ -29,17 +29,17 @@ Keep the main demo to about 75 seconds.
 
 **The memorable moment:** A judge presses the incident button and immediately watches video from *before* the button press. That is the product in one interaction.
 
-The team must demonstrate real recording of video, not a slideshow of still images presented as video. If the source only updates snapshots periodically, label the output a time lapse. Choose a permitted continuous video source for the judged MVP if FDOT stream reuse is not authorized or technically available.
+The team must demonstrate real recording of video, not a slideshow of still images presented as video. If the source only updates snapshots periodically, label the output a time lapse. Pick the five cameras from those that provide continuous video, not periodic stills.
 
 ## MVP acceptance criteria
 
 The MVP is complete when all of these work end to end:
 
-* One permitted continuous video source is playable in the app.
+* Five permitted I-95 cameras in Miami-Dade County are recorded continuously and each is playable in the app.
 * Viewing the live stream and scrubbing the loop buffer work without signing in.
 * Saving an incident requires Google sign in, which creates or identifies a user account. Signing in after the press does not lose any preserved footage.
-* The backend records it into short playable segments while a trip is active.
-* A trip without an incident retains a five hour loop. When full, the oldest temporary segment is overwritten, dashcam style. Retention is a setting so the demo can use a shorter loop.
+* The backend records each camera into short playable segments whenever the server is running, whether or not a trip is active.
+* Each camera keeps a five hour loop. When full, the oldest temporary segment is overwritten, dashcam style. Retention is a setting so the demo can use a shorter loop.
 * The incident button preserves the available earlier segments and records a short period afterward.
 * The preserved recording plays as one MP4 clip or a clearly ordered set of clips.
 * A private **Saved Incidents** page lists that account's preserved video blocks in time order.
@@ -54,22 +54,22 @@ A permitted video can be replayed through the **same recording pipeline** as liv
 
 Do not add these until the core demo works and has been rehearsed:
 
-* Multiple cameras, full route matching, background phone tracking, or statewide coverage.
+* More than the five chosen I-95 cameras, full route matching, background phone tracking, or statewide coverage.
 * Computer vision, road condition warnings, vehicle tracking, or automatic crash detection.
 * Claims analysis, fault percentages, or direct submission to State Farm.
 * PDF reports, payment systems, or a complex map.
 * A cryptographic chain of custody. A file hash is optional metadata, not proof of what happened on the road.
 
-One working camera and one saved clip prove the central mechanism.
+Five cameras, one shared recorder design, and one saved clip prove the central mechanism. The camera picker is a plain list, not a map.
 
 ## Technical design
 
 ```mermaid
 flowchart LR
-    T[Trip, no sign in needed] --> B[Segment recorder]
-    A[Permitted video source] --> B
-    B --> C[Five hour loop buffer]
-    C --> P[Scrub back playback]
+    A[Five permitted I-95 cameras] --> B[Segment recorder, one FFmpeg per camera]
+    B --> C[Five hour loop buffer per camera]
+    T[Trip, no sign in needed] --> P[Scrub back playback]
+    C --> P
     C --> D{Incident button}
     D -->|Pressed| E[Preserve earlier segments]
     E --> F[Record short period after trigger]
@@ -81,13 +81,29 @@ flowchart LR
     D -->|Not pressed| I[Overwrite oldest segments]
 ```
 
-Use a web app, one backend recording process, and a media recorder such as FFmpeg. Supabase Auth with Google, Postgres, and private Storage is a reasonable way to keep the login, incident records, and videos together. The recorder can write short local segments, for example 10 seconds each. The trip keeps a five hour loop of segments, deleting the oldest temporary segment as each new one arrives once the loop is full. The player can scrub back through the loop through an HLS playlist with a sliding window. On an incident trigger, mark a configurable pre trigger window (a few minutes by default, not the whole loop) for retention and continue recording for a short post incident window. Preserved segments are never overwritten. Then assemble a clip, upload it to private storage, and save the incident record under the authenticated user's ID.
+Use a web app, one backend recording process, and FFmpeg. The backend runs one FFmpeg process per camera, all the time, writing 10 second segments. The buffer belongs to the **camera**, not the trip: a trip is a pointer to one camera and a time range, so several students watching one camera share one buffer. Each camera keeps a five hour loop of segments, deleting the oldest temporary segment as each new one arrives once the loop is full. A trip can scrub back through the camera's whole loop, including footage from before the trip started, through an HLS playlist the backend builds from `segment` rows. On an incident trigger, mark a configurable pre trigger window (a few minutes by default, not the whole loop) for retention and continue recording for a short post incident window. Preserved segments are never overwritten. Then assemble a clip, upload it to private storage, and save the incident record under the authenticated user's ID.
 
-Five hours of video is about 2.2 GB at 1 Mbps or 4.5 GB at 2 Mbps per trip. Record at a modest bitrate and also delete the oldest temporary segments if free disk falls below a floor.
+Five hours of video is about 2.25 GB per camera at 1 Mbps, so about 11 GB for all five, with about 5 Mbps of steady ingest. One laptop or small VM with an SSD handles this. Record at a modest bitrate (for example 720p at about 1 Mbps, or `-c copy` if the source is already small) and also delete the oldest temporary segments if free disk falls below a floor.
+
+### Where data is stored
+
+| Data | Storage | Path or table |
+| --- | --- | --- |
+| Loop buffer segments | Local SSD on the recording machine | `media/cameras/<camera_id>/<epoch_seconds>.ts` |
+| Buffer playlist | Built on request by the backend from `segment` rows, gated by trip token or signed in owner | Not stored |
+| Clip being assembled | Local SSD | `media/incidents/<incident_id>/clip.mp4` |
+| Saved incident clips | Supabase Storage, **private** bucket | `incidents/<user_id>/<incident_id>/v<version>.mp4` |
+| Metadata | Supabase Postgres | `camera`, `user`, `trip`, `segment`, `incident` |
+| Users | Supabase Auth with Google | Backend verifies the JWT and derives the user ID |
+| Recently viewed signed URLs | Browser memory only | Client LRU, see below |
+
+Do not use FFmpeg's `-hls_flags delete_segments`. It deletes by position and cannot tell that a segment is preserved. Our retention job deletes files based on `segment` rows. Clips are assembled with `ffmpeg -f concat -c copy ... -movflags +faststart` so the player can load metadata first. After a clip uploads, delete its local preserved segments and `clip.mp4`. Never serve `media/` as public static files.
+
+**Offline fallback:** If the venue network is unreliable, the backend can point `incident.storage_path` at a local file served by an authenticated FastAPI endpoint with the same ownership check and API response. Google sign in still needs the network, so test it on the judging laptop early.
 
 ### Sign in only to save
 
-Anyone can start a trip, watch the stream, and scrub the loop without an account. An anonymous trip receives an unguessable trip token held by that browser, and only that browser can fetch its buffer. When a signed out student presses the incident button, the server records the trigger time and preserves segments immediately, then the app prompts Google sign in. After sign in, the backend attaches the pending incident to the verified user only when the request carries both the trip token and a valid auth token. An incident can be claimed once. Unclaimed pending incidents expire after about 15 minutes and their video is deleted. Saved Incidents always requires sign in and ownership.
+Anyone can start a trip, watch the stream, and scrub the loop without an account. An anonymous trip receives an unguessable trip token held by that browser. Buffer playlists are served only to a request that carries a valid trip token or belongs to the trip's signed in owner. When a signed out student presses the incident button, the server records the trigger time and preserves segments immediately, then the app prompts Google sign in. After sign in, the backend attaches the pending incident to the verified user only when the request carries both the trip token and a valid auth token. An incident can be claimed once. Unclaimed pending incidents expire after about 15 minutes and their video is deleted. Saved Incidents always requires sign in and ownership.
 
 The frontend sends the user's auth token to the backend. The backend verifies it and derives the user ID from the token. Never trust a user ID supplied in the request body. Every incident list, playback, and download request must check ownership. Use short lived signed playback URLs or an authenticated backend response. Keep video buckets private and do not commit OAuth credentials or service keys.
 
@@ -101,27 +117,29 @@ The acceptance check is simple: open a saved incident, return to the list, and r
 
 Suggested records:
 
-* `camera`: identifier, name, location, source type, input location, and permission status.
+* `camera`: identifier, name, location (I-95 mile marker or cross street), source type, input URL, and permission status. The recorder refuses any camera not marked permitted.
 * `user`: Google authenticated user ID and basic display information.
 * `trip`: identifier, **user ID** (empty while anonymous), anonymous trip token hash, camera identifier, start time, end time, and state.
-* `segment`: trip identifier, file path, actual recording start and end, temporary or preserved status.
-* `incident`: identifier, **user ID** (empty until claimed), trip identifier, trigger time, requested clip window, actual clip window, private video path, processing state, and claim state.
+* `segment`: **camera identifier**, file path, source timestamp, actual recording start and end, temporary or preserved status, and incident identifier when preserved.
+* `incident`: identifier, **user ID** (empty until claimed), trip identifier, camera identifier, trigger time, requested clip window, actual clip window, private video path, video version, processing state, claim state, and expiry time while unclaimed.
 
 **Critical test:** The saved clip must contain footage from before the button press. Prove it with a visible clock or event in the video. Keep the source's own timestamp separate from the time our server received or recorded it.
 
 ## Data and rights gate
 
-FL511 publicly shows cameras, but its terms restrict reuse of its content without FDOT's express written consent. A public stream or camera catalog is not permission to archive and republish its video. Use team recorded video, licensed sample footage, or another source with clear permission for the hackathon demo. An authorized FDOT source can be added later.
+FL511 terms restrict reuse of its content without FDOT's express written consent. **The team has written permission** to record the five I-95 cameras used in this project. Keep a copy of that permission available to show judges (outside the repo if it contains personal contact details), and record only cameras it covers. Describe the arrangement exactly as the permission states it; do not call it a partnership unless it is one.
 
 The ArcGIS `FL511_Traffic_Cameras` layer lists camera metadata and image URLs. It does not establish that those URLs are continuous video streams, that the catalog is a current statewide inventory, or that recording is allowed.
 
-**First build gate:** Take one permitted video source, record 30 seconds into a fresh file, and play it back. Solve this before building the frontend. If FDOT provides only periodically updated stills, use another permitted video source for the MVP and describe FDOT video as a future integration.
+**First build gate:** Take one of the permitted I-95 cameras, record 30 seconds into a fresh file, and play it back. Solve this before building the frontend. If a chosen camera provides only periodically updated stills, replace it with one that streams video, or label its output a time lapse.
+
+**Demo fallback:** Keep a local recording of one of the five cameras. If the live feed or venue network fails, replay it through the same recording pipeline and label it as replayed.
 
 ## Three person split
 
 | Person | Owns | First handoff |
 | --- | --- | --- |
-| One | Video input, segment recording, five hour loop retention, buffer playback | A playable new 30 second file from the permitted source |
+| One | Video input for the five cameras, segment recording, five hour loop retention, buffer playback | A playable new 30 second file from one permitted I-95 camera |
 | Two | Google auth integration, trip ownership, incident state, private storage, playback and download endpoints | A trigger that saves a clip under the verified user and a list endpoint scoped to that user |
 | Three | Sign in, trip screen, Saved Incidents page, recently viewed cache, pitch, demo rehearsal | A working trigger to sign in to saved block flow with faster repeat playback |
 
@@ -129,12 +147,12 @@ Agree on the file paths and API responses immediately. Integrate one real record
 
 ## Build order
 
-1. Record a permitted video source and play the resulting file.
-2. Split recording into short segments in a five hour loop and play back the buffer with scrubbing.
+1. Record one permitted I-95 camera and play the resulting file.
+2. Split recording into short segments in a five hour loop per camera, run all five cameras, and play back the buffer with scrubbing.
 3. Add the incident trigger, working signed out, and preserve footage from before it.
 4. Add Google sign in at save time and attach the pending incident to the verified account.
 5. Add post trigger recording, private storage, playback, and download.
-6. Add a simple trip UI and Saved Incidents page with accurate time labels.
+6. Add a simple trip UI with a camera list and a Saved Incidents page with accurate time labels.
 7. Add the small recently viewed playback cache and clear it on sign out.
 8. Rehearse on the judging laptop and prepare a local replay fallback.
 
@@ -146,7 +164,7 @@ If time runs short, skip maps and video effects. The priority is a saved playabl
 * **Solution, 20 seconds:** iWitness keeps a dashcam style five hour loop recording during an opt in trip and saves the moments that matter to the student's account when they report an incident.
 * **Live demo, 75 seconds:** Start the stream signed out, scrub back, press the incident button, sign in to save, then open the new Saved Incidents block and play footage from before the press.
 * **Technical proof, 30 seconds:** Explain segment recording, the five hour loop, trigger timing, clip assembly, and private account storage. Sign out and back in to show the recording persists.
-* **State Farm fit and limits, 30 seconds:** This helps a student preserve potentially useful context after an accident. The video may not show the incident, and FDOT use would require authorized access.
+* **State Farm fit and limits, 30 seconds:** This helps a student preserve potentially useful context after an accident. The video may not show the incident. We record FDOT cameras under written permission.
 
 A defensible opening line is: **“FL511 lets you view traffic cameras, but says it does not save the footage. iWitness shows how a driver could preserve the moments that matter.”** Do not claim there is a camera every mile or that every Florida agency fails to record.
 
@@ -157,13 +175,13 @@ A defensible opening line is: **“FL511 lets you view traffic cameras, but says
 * **Camera coverage:** A nearby camera does not necessarily see the student's car, lane, or collision.
 * **Evidence:** A recording may provide context. It does not prove fault or guarantee that an insurer will use it.
 * **Authenticity:** A file hash, if added, can indicate that our stored file has not changed. It cannot prove the source captured a particular event at a particular time.
-* **FDOT integration:** Do not claim an FDOT partnership, archive, or approved recording access unless one exists.
+* **FDOT access:** Say the team has FDOT's written permission to record these five cameras. Do not claim a partnership, a statewide archive, or anything beyond what the permission covers.
 
 ## Sources and project history
 
 * [FL511 traffic cameras](https://www.fl511.com/cctv): States that video and images are neither stored nor recorded.
 * [FL511 terms](https://www.fl511.com/privacy): Restricts reuse without express written consent.
-* [ArcGIS camera layer](https://services.arcgis.com/3wFbqsFPLeKqOlIK/ArcGIS/rest/services/FL511_Traffic_Cameras/FeatureServer/0): Camera metadata layer, not verified continuous video access.
+* [ArcGIS camera layer](https://services.arcgis.com/3wFbqsFPLeKqOlIK/ArcGIS/rest/services/FL511_Traffic_Cameras/FeatureServer/0): Camera metadata layer. Use it to find the I-95 cameras, then confirm each one streams continuous video.
 * [Florida auto insurance overview](https://myfloridacfo.com/division/consumers/understanding-insurance/personal-automobile-insurance-overview): Distinguishes coverage types.
 
 The original concept included AI analysis, wet road warnings, and a claim packet. The team explicitly cut those from the MVP. **iWitness is the loop video recorder and incident save flow.** Judges should see it working before hearing about future features.
