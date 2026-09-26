@@ -131,7 +131,6 @@ Agree on file paths and API response shapes before building across the boundary.
 
 - Root `.gitignore` has `*.ts` (meant for MPEG-TS video segments), which also ignores TypeScript files such as `client/vite.config.ts`. Check `git check-ignore -v <file>` before assuming a `.ts` file is tracked; prefer a narrower pattern (for example `segments/**/*.ts`) if this bites.
 - Recorded media (`recordings/`, `segments/`, `media/`, `*.mp4`, `*.m3u8`) is gitignored. Keep video out of git.
-- `/health` is currently `POST`, not `GET`.
 
 ## Working style for agents
 

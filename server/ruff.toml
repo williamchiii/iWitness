@@ -1,4 +1,8 @@
 extend-exclude = [".venv"]
 
 [lint]
-select = ["E4", "E7", "E9", "F"]
+# D103: missing docstring in a public (top-level) function — catches
+# exactly the gap CLAUDE.md calls out ("docstrings on public functions").
+# Not D101/D102 (classes/methods) yet: fixing those across the existing
+# codebase is a bigger, separate pass, not part of this hygiene cleanup.
+select = ["E4", "E7", "E9", "F", "D103"]

@@ -11,16 +11,14 @@ from dataclasses import dataclass
 from pathlib import Path
 import subprocess
 import time
-from typing import Literal
 
 try:
     from .config import settings
+    from .schemas import SourceType
 except ImportError:
     # Supports ``uvicorn main:app`` when launched from the server directory.
     from config import settings
-
-
-SourceType = Literal["live", "replay"]
+    from schemas import SourceType
 
 
 @dataclass(frozen=True)
