@@ -176,7 +176,10 @@ def list_cameras(connection: psycopg.Connection = Depends(db.get_db)) -> list[Ca
 
 
 @router.post("/trips", response_model=StartTripResponse)
-def start_trip(request: StartTripRequest, connection: psycopg.Connection = Depends(db.get_db)) -> StartTripResponse:
+def start_trip(
+    request: StartTripRequest,
+    connection: psycopg.Connection = Depends(db.get_db),
+) -> StartTripResponse:
     """Start an anonymous trip on a permitted camera and issue its token."""
 
     camera = connection.execute(

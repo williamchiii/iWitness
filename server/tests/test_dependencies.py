@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import unittest
@@ -11,9 +10,11 @@ os.environ.setdefault("PLAYBACK_SIGNING_SECRET", "dependency-test-secret")
 
 try:
     from server import db, main
+    from server.tests.asgi_test_client import send_request
 except ModuleNotFoundError:
     import db
     import main
+    from tests.asgi_test_client import send_request
 
 
 class _Connection:
@@ -29,43 +30,10 @@ class _Connection:
 
 
 def _get(path: str) -> tuple[int, object]:
-    async def run() -> tuple[int, object]:
-        messages: list[dict] = []
-        received = False
+    """Send one GET request and decode its body as JSON."""
 
-        async def receive() -> dict:
-            nonlocal received
-            if not received:
-                received = True
-                return {"type": "http.request", "body": b"", "more_body": False}
-            return {"type": "http.disconnect"}
-
-        async def send(message: dict) -> None:
-            messages.append(message)
-
-        scope = {
-            "type": "http",
-            "asgi": {"version": "3.0"},
-            "http_version": "1.1",
-            "method": "GET",
-            "scheme": "http",
-            "path": path,
-            "raw_path": path.encode("ascii"),
-            "query_string": b"",
-            "root_path": "",
-            "headers": [],
-            "client": ("testclient", 50000),
-            "server": ("testserver", 80),
-        }
-        await main.app(scope, receive, send)
-        body = b"".join(
-            message.get("body", b"")
-            for message in messages
-            if message["type"] == "http.response.body"
-        )
-        return messages[0]["status"], json.loads(body)
-
-    return asyncio.run(run())
+    status, _, body = send_request(main.app, "GET", path)
+    return status, json.loads(body)
 
 
 class DependencyTests(unittest.TestCase):

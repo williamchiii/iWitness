@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import unittest
@@ -12,60 +11,17 @@ os.environ.setdefault("PLAYBACK_SIGNING_SECRET", "exception-handler-test-secret"
 
 try:
     from server import main
+    from server.tests.asgi_test_client import send_request
 except ModuleNotFoundError:
     import main
+    from tests.asgi_test_client import send_request
 
 
 def _request(method: str, path: str) -> tuple[int, dict[str, str], str]:
-    """Send one HTTP request without an optional test-client dependency."""
+    """Send one HTTP request and decode its body as text."""
 
-    async def run() -> tuple[int, dict[str, str], str]:
-        messages: list[dict] = []
-        received = False
-
-        async def receive() -> dict:
-            nonlocal received
-            if not received:
-                received = True
-                return {"type": "http.request", "body": b"", "more_body": False}
-            return {"type": "http.disconnect"}
-
-        async def send(message: dict) -> None:
-            messages.append(message)
-
-        scope = {
-            "type": "http",
-            "asgi": {"version": "3.0"},
-            "http_version": "1.1",
-            "method": method,
-            "scheme": "http",
-            "path": path,
-            "raw_path": path.encode("ascii"),
-            "query_string": b"",
-            "root_path": "",
-            "headers": [],
-            "client": ("testclient", 50000),
-            "server": ("testserver", 80),
-        }
-        try:
-            await main.app(scope, receive, send)
-        except Exception:
-            # Starlette sends a 500 response, then reraises the original error.
-            if not messages or messages[0]["status"] != 500:
-                raise
-
-        start = messages[0]
-        headers = {
-            name.decode("latin-1"): value.decode("latin-1")
-            for name, value in start["headers"]
-        }
-        body = b"".join(
-            message.get("body", b"") for message in messages[1:]
-            if message["type"] == "http.response.body"
-        ).decode("utf-8")
-        return start["status"], headers, body
-
-    return asyncio.run(run())
+    status, headers, body = send_request(main.app, method, path)
+    return status, headers, body.decode("utf-8")
 
 
 class ExceptionHandlerTests(unittest.TestCase):
