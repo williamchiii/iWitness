@@ -111,13 +111,19 @@ class IncidentProcessor:
                     "No preserved segments are available for this incident"
                 )
 
-            for segment in segments:
-                self._validate_segment_path(segment.file_path, incident.camera_id)
-
             actual_start = min(segment.actual_start for segment in segments)
             actual_end = max(segment.actual_end for segment in segments)
-            if actual_end < actual_start:
+            if any(segment.actual_end <= segment.actual_start for segment in segments):
                 raise IncidentProcessingError("Preserved segment times are invalid")
+
+            duration_seconds = sum(
+                (segment.actual_end - segment.actual_start).total_seconds()
+                for segment in segments
+            )
+            segment_paths = [
+                self._validate_segment_path(segment.file_path, incident.camera_id)
+                for segment in segments
+            ]
 
             output_directory = self._incident_output_directory(incident_key)
             output_directory.mkdir(parents=True, exist_ok=True)
@@ -127,13 +133,7 @@ class IncidentProcessor:
 
             _remove_file(output_path)
             _remove_file(temporary_output)
-            self._write_concat_manifest(
-                manifest_path,
-                [
-                    self._validate_segment_path(segment.file_path, incident.camera_id)
-                    for segment in segments
-                ],
-            )
+            self._write_concat_manifest(manifest_path, segment_paths)
 
             completed = self._run_ffmpeg(manifest_path, temporary_output)
             if completed.returncode != 0:
@@ -146,7 +146,6 @@ class IncidentProcessor:
 
             temporary_output.replace(output_path)
             size_bytes, sha256 = _file_metadata(output_path)
-            duration_seconds = max(0.0, (actual_end - actual_start).total_seconds())
             storage_path = self._storage_path(output_path)
 
             with self.database.connect() as connection:

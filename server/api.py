@@ -28,6 +28,7 @@ from .schemas import (
     TripResponse,
 )
 from .incident_schemas import IncidentResponse
+from .segment_preservation import preserve_segments
 
 
 router = APIRouter()
@@ -299,7 +300,7 @@ def create_incident(
             """,
             (user_id, principal.email, principal.display_name, principal.avatar_url),
         )
-    incident_id = connection.execute(
+    inserted = connection.execute(
         """
         INSERT INTO incident (
             trip_id,
@@ -323,7 +324,7 @@ def create_incident(
             CASE WHEN %s::uuid IS NULL THEN 'unclaimed' ELSE 'claimed' END,
             CASE WHEN %s::uuid IS NULL THEN now() + (%s * interval '1 second') ELSE NULL END
         )
-        RETURNING id
+        RETURNING id, requested_start, trigger_at
         """,
         (
             trip_id,
@@ -335,39 +336,15 @@ def create_incident(
             user_id,
             settings.unclaimed_incident_seconds,
         ),
-    ).fetchone()[0]
+    ).fetchone()
+    incident_id, requested_start, trigger_at = inserted
 
-    # Keep newly selected files out of loop retention.
-    connection.execute(
-        """
-        UPDATE segment AS s
-        SET status = 'preserved', incident_id = %s
-        WHERE s.camera_id = %s
-          AND s.status = 'temporary'
-          AND s.actual_start < (
-              SELECT trigger_at FROM incident WHERE id = %s
-          )
-          AND s.actual_end > (
-              SELECT requested_start FROM incident WHERE id = %s
-          )
-        """,
-        (incident_id, trip.camera_id, incident_id, incident_id),
-    )
-    # Associate already-preserved files too: separate incidents on the
-    # same camera may need the same pre-trigger footage.
-    connection.execute(
-        """
-        INSERT INTO incident_segment (incident_id, segment_id)
-        SELECT %s, s.id
-        FROM segment AS s
-        JOIN incident AS i ON i.id = %s
-        WHERE s.camera_id = i.camera_id
-          AND s.status = 'preserved'
-          AND s.actual_start < i.trigger_at
-          AND s.actual_end > i.requested_start
-        ON CONFLICT DO NOTHING
-        """,
-        (incident_id, incident_id),
+    preserve_segments(
+        connection,
+        incident_id,
+        trip.camera_id,
+        requested_start,
+        trigger_at,
     )
 
     row = connection.execute(_INCIDENT_SELECT, (incident_id,)).fetchone()

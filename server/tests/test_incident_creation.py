@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import os
 import unittest
 from unittest.mock import patch
@@ -18,6 +18,8 @@ from server.schemas import TripResponse
 INCIDENT_ID = UUID("11111111-1111-1111-1111-111111111111")
 TRIP_ID = UUID("22222222-2222-2222-2222-222222222222")
 USER_ID = UUID("33333333-3333-3333-3333-333333333333")
+TRIGGER_AT = datetime(2026, 9, 26, 18, 0, tzinfo=timezone.utc)
+REQUESTED_START = TRIGGER_AT - timedelta(seconds=60)
 
 
 class _Result:
@@ -42,7 +44,7 @@ class _Connection:
         self.queries.append((query, params))
         normalized = " ".join(query.split()).lower()
         if normalized.startswith("insert into incident ("):
-            return _Result((INCIDENT_ID,))
+            return _Result((INCIDENT_ID, REQUESTED_START, TRIGGER_AT))
         if normalized.startswith("select i.id"):
             now = datetime.now(timezone.utc)
             return _Result((
@@ -79,6 +81,17 @@ class IncidentCreationTests(unittest.TestCase):
         self.assertTrue(any(
             "INSERT INTO incident_segment" in query for query, _ in connection.queries
         ))
+        preserve_queries = [
+            (query, params) for query, params in connection.queries
+            if "UPDATE segment AS s" in query or "INSERT INTO incident_segment" in query
+        ]
+        self.assertEqual(len(preserve_queries), 2)
+        for query, params in preserve_queries:
+            self.assertIn("s.actual_start < %s", query)
+            self.assertIn("s.actual_end > %s", query)
+            self.assertEqual(
+                params, (INCIDENT_ID, "camera-demo", TRIGGER_AT, REQUESTED_START)
+            )
 
 
 if __name__ == "__main__":
