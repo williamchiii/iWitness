@@ -39,7 +39,6 @@ except ImportError:
 
 
 router = APIRouter()
-PLAYBACK_URL_SECONDS = 300
 
 
 def _utc(value: datetime) -> datetime:
@@ -208,7 +207,7 @@ def get_buffer(
 
     earliest = _utc(row[0]) if row[0] is not None else None
     latest = _utc(row[1]) if row[1] is not None else None
-    expires = int(time.time()) + PLAYBACK_URL_SECONDS
+    expires = int(time.time()) + settings.playback_url_seconds
     payload = f"playlist|{trip_id}|{trip.camera_id}"
     signature = _signature(payload, expires)
     query = urlencode({"trip_id": str(trip_id), "exp": expires, "sig": signature})
@@ -270,15 +269,17 @@ def buffer_playlist(
             ],
         ]
     )
+    # No #EXT-X-PLAYLIST-TYPE tag: this is a fresh snapshot of the current
+    # loop buffer on every request, not an append-only EVENT playlist —
+    # retention removes the oldest segments as the loop rolls forward.
     lines = [
         "#EXTM3U",
         "#EXT-X-VERSION:3",
         f"#EXT-X-TARGETDURATION:{target_duration}",
         "#EXT-X-MEDIA-SEQUENCE:0",
-        "#EXT-X-PLAYLIST-TYPE:EVENT",
     ]
     for segment_id, actual_start, actual_end in segments:
-        expires = int(time.time()) + PLAYBACK_URL_SECONDS
+        expires = int(time.time()) + settings.playback_url_seconds
         segment_signature = _signature(
             f"segment|{segment_id}|{camera_id}",
             expires,

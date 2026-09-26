@@ -35,6 +35,10 @@ jobs:
     defaults:
       run:
         working-directory: server
+    env:
+      # Only used to satisfy config.py's fail-fast check during the
+      # smoke-test import below; never a real secret.
+      PLAYBACK_SIGNING_SECRET: ci-smoke-test-secret
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

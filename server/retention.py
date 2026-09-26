@@ -27,17 +27,24 @@ class RetentionWorker:
         media_root: Path,
         buffer_seconds: int,
         poll_seconds: float = 5.0,
+        grace_seconds: int = 0,
     ) -> None:
         if buffer_seconds <= 0:
             raise ValueError("buffer_seconds must be greater than zero")
         if poll_seconds <= 0:
             raise ValueError("poll_seconds must be greater than zero")
+        if grace_seconds < 0:
+            raise ValueError("grace_seconds must not be negative")
 
         self.camera_id = camera_id
         self.server_root = server_root.resolve()
         self.media_root = media_root.resolve()
         self.buffer_seconds = buffer_seconds
         self.poll_seconds = poll_seconds
+        # A playlist can still be handing out signed URLs for a segment
+        # after it falls outside buffer_seconds; keep it on disk a bit
+        # longer than that so those URLs don't start 404ing mid-scrub.
+        self.grace_seconds = grace_seconds
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -87,7 +94,7 @@ class RetentionWorker:
         if latest_end is None:
             return 0
 
-        cutoff = latest_end - timedelta(seconds=self.buffer_seconds)
+        cutoff = latest_end - timedelta(seconds=self.buffer_seconds + self.grace_seconds)
         with db.connect() as connection:
             rows = connection.execute(
                 """

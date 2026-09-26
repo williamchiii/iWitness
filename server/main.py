@@ -111,6 +111,7 @@ async def lifespan(_: FastAPI):
                 server_root=SERVER_ROOT,
                 media_root=settings.media_root,
                 buffer_seconds=settings.buffer_seconds,
+                grace_seconds=settings.playback_url_seconds,
             )
 
             # A failure starting any one of these must not stop the other
