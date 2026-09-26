@@ -12,6 +12,12 @@ export function formatClock(ms: number) {
   })
 }
 
+// "2026-09-26_143304" in Miami time, for file names.
+export function formatFileStamp(ms: number) {
+  // sv-SE prints ISO-style "2026-09-26 14:33:04".
+  return new Date(ms).toLocaleString('sv-SE', { timeZone: CAMERA_TIME_ZONE }).replace(' ', '_').replaceAll(':', '')
+}
+
 // "Sep 26", in Miami's zone like the clock times.
 export function formatDay(ms: number) {
   return new Date(ms).toLocaleDateString('en-US', { timeZone: CAMERA_TIME_ZONE, month: 'short', day: 'numeric' })

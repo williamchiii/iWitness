@@ -3,12 +3,22 @@ import { createPortal } from 'react-dom'
 import { api } from '../lib/api'
 import type { Incident, Playback } from '../lib/api/types'
 import { cameraNumber, cameras } from '../lib/cameras'
-import { formatClock, formatClockRange, formatDay, formatDuration } from '../lib/format'
+import { downloadFile } from '../lib/download'
+import { formatClock, formatClockRange, formatDay, formatDuration, formatFileStamp } from '../lib/format'
 import ClipPlayer from './ClipPlayer'
 
 interface Props {
   incident: Incident
   onClose: () => void
+}
+
+// Signed links are short-lived: refresh one this close to expiring before using it.
+const LINK_REFRESH_MARGIN_MS = 30_000
+
+// iwitness_i-95-at-sw-8th-st_2026-09-26_143304.mp4
+function downloadName(incident: Incident) {
+  const camera = incident.camera_name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+  return `iwitness_${camera}_${formatFileStamp(Date.parse(incident.trigger_at))}.mp4`
 }
 
 function sourceLabel(incident: Incident) {
@@ -20,8 +30,13 @@ function sourceLabel(incident: Incident) {
 // document.body: the Library's frosted panel (backdrop-filter) would otherwise
 // become the containing block for this fixed overlay and trap it inside the panel.
 export default function ClipModal({ incident, onClose }: Props) {
+  // Newest playback links, used by Download. The player keeps the first URL it
+  // got, so refreshing an expired link never restarts the video being watched.
   const [playback, setPlayback] = useState<Playback | null>(null)
+  const [playerSrc, setPlayerSrc] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [downloading, setDownloading] = useState(false)
+  const [downloadError, setDownloadError] = useState<string | null>(null)
   const camera = cameras.find((c) => c.id === incident.camera_id)
 
   useEffect(() => {
@@ -29,7 +44,9 @@ export default function ClipModal({ incident, onClose }: Props) {
     api
       .getPlayback(incident.id, true)
       .then((result) => {
-        if (current) setPlayback(result)
+        if (!current) return
+        setPlayback(result)
+        setPlayerSrc(result.playback_url)
       })
       .catch(() => {
         if (current) setError("This clip can't be played right now.")
@@ -46,6 +63,26 @@ export default function ClipModal({ incident, onClose }: Props) {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
+
+  // Saves the file directly, no new tab. An expired (or nearly expired) link is
+  // swapped for a fresh one first.
+  async function download() {
+    if (!playback) return
+    setDownloading(true)
+    setDownloadError(null)
+    try {
+      let link = playback
+      if (Date.now() >= Date.parse(link.expires_at) - LINK_REFRESH_MARGIN_MS) {
+        link = await api.getPlayback(incident.id, true)
+        setPlayback(link)
+      }
+      await downloadFile(link.download_url, downloadName(incident))
+    } catch {
+      setDownloadError('Could not download the clip. Try again.')
+    } finally {
+      setDownloading(false)
+    }
+  }
 
   const start = Date.parse(incident.actual_start!)
   const end = Date.parse(incident.actual_end!)
@@ -72,21 +109,37 @@ export default function ClipModal({ incident, onClose }: Props) {
               {incident.camera_name}
             </h2>
           </div>
-          <button
-            type="button"
-            aria-label="Close"
-            onClick={onClose}
-            className="grid size-9 shrink-0 place-items-center rounded-md border border-line text-muted transition-colors hover:text-ink"
-          >
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-              <path d="M18 6 6 18M6 6l12 12" />
-            </svg>
-          </button>
+          <div className="flex shrink-0 items-center gap-2">
+            {playback && (
+              <button
+                type="button"
+                onClick={download}
+                disabled={downloading}
+                className="flex h-9 items-center gap-2 rounded-md border border-line px-3 text-sm font-medium transition-colors hover:bg-surface disabled:opacity-60"
+              >
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 20h14" />
+                </svg>
+                {downloading ? 'Downloading...' : 'Download'}
+              </button>
+            )}
+            <button
+              type="button"
+              aria-label="Close"
+              onClick={onClose}
+              className="grid size-9 shrink-0 place-items-center rounded-md border border-line text-muted transition-colors hover:text-ink"
+            >
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                <path d="M18 6 6 18M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
         </div>
+        {downloadError && <p className="-mt-2 px-6 pb-3 text-right text-sm text-rec">{downloadError}</p>}
 
-        {playback ? (
+        {playerSrc ? (
           <ClipPlayer
-            src={playback.playback_url}
+            src={playerSrc}
             startMs={start}
             triggerMs={trigger}
             labels={[incident.source_type === 'replay' ? 'Replayed' : 'Live camera']}
