@@ -6,12 +6,13 @@ minutes of each camera ahead of time, then switch to them if the network
 is unreliable. Saved footage goes through the same recording pipeline and
 the app labels it "Replayed".
 
-    python camera_sources.py capture [--seconds 300] [camera id ...]
-    python camera_sources.py use replay
-    python camera_sources.py use live
+    python -m server.camera_sources capture [--seconds 300] [camera id ...]
+    python -m server.camera_sources use replay
+    python -m server.camera_sources use live
 
-``capture`` writes server/replay/<camera id>.mp4 (gitignored). Restart the
-backend after ``use``: it reads each camera's input when it starts.
+Run from the repository root. ``capture`` writes
+server/replay/<camera id>.mp4 (gitignored). Restart the backend after
+``use``: it reads each camera's input when it starts.
 """
 
 from __future__ import annotations
@@ -20,14 +21,8 @@ import argparse
 from pathlib import Path
 import subprocess
 
-try:
-    from . import db, fl511
-    from .config import SERVER_ROOT, settings
-except ImportError:
-    # Supports running from the server directory.
-    import db
-    import fl511
-    from config import SERVER_ROOT, settings
+from . import db, fl511
+from .config import SERVER_ROOT, settings
 
 # Camera id to FL511 site id; the same as migrations/004_fl511_live_cameras.sql.
 FL511_SITES = {

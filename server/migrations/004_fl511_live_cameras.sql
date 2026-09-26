@@ -5,8 +5,8 @@
 --
 -- The team's FDOT permission covers recording these cameras for educational
 -- use (details in CLAUDE.local.md). To demo without the network, switch to
--- saved recordings with `python camera_sources.py use replay`; the same
--- site ids are in camera_sources.py.
+-- saved recordings with `python -m server.camera_sources use replay`; the
+-- same site ids are in server/camera_sources.py.
 UPDATE camera AS c
 SET source_type = 'live',
     input_url = v.input_url

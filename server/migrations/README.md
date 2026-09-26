@@ -10,5 +10,5 @@ replaying `server/replay/camera-demo.mp4` for now. It is safe to run again.
 `004_fl511_live_cameras.sql` switches those five cameras to their live FL511
 streams (`input_url = 'fl511:<site id>'`, see `server/fl511.py`). Restart the
 backend after running it. To demo offline, save each feed with
-`python camera_sources.py capture` and switch with
-`python camera_sources.py use replay` (and `use live` to switch back).
+`python -m server.camera_sources capture` and switch with
+`python -m server.camera_sources use replay` (and `use live` to switch back).
