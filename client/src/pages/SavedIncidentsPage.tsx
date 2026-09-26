@@ -59,7 +59,7 @@ function IncidentCard({ incident, onOpen }: { incident: Incident; onOpen: () => 
       <Thumbnail
         src={ready ? (incident.thumbnail_url ?? null) : null}
         label="Saved clip"
-        className="w-full self-start sm:w-48"
+        className="w-full self-center sm:w-48"
       >
         {ready ? (
           <span className="grid size-10 place-items-center rounded-full bg-white/90 text-ink shadow-sm">
@@ -79,7 +79,7 @@ function IncidentCard({ incident, onOpen }: { incident: Incident; onOpen: () => 
         )}
         <p className="mt-1 text-lg font-medium tracking-tight">{incident.camera_name}</p>
         <p className="text-sm tabular-nums text-muted">{recordedLine(incident)}</p>
-        <p className="text-sm tabular-nums text-muted">Pressed at {formatClock(Date.parse(incident.trigger_at))}</p>
+        <p className="text-sm tabular-nums text-muted">Saved at {formatClock(Date.parse(incident.trigger_at))}</p>
         <div className="mt-auto flex flex-wrap gap-2 pt-3">
           <Tag>{STATUS[incident.processing_state]}</Tag>
           <Tag>{incident.source_type === 'replay' ? 'Replayed recording' : 'Live camera'}</Tag>
