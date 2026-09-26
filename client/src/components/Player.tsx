@@ -17,6 +17,11 @@ interface Timeline {
 
 // Within this many seconds of the live edge counts as live.
 const LIVE_SLACK_SECONDS = 5
+// After a fatal error, resume loading this many times, this far apart, before
+// showing the video as unavailable. With hls.js's own retries in each attempt
+// that rides out about a minute of outage, such as a backend restart.
+const RECOVER_ATTEMPTS = 10
+const RECOVER_DELAY_MS = 3000
 
 function Label({ children }: { children: ReactNode }) {
   return (
@@ -55,18 +60,35 @@ export default function Player({ src, labels, onExpired }: Props) {
       // hls.js doesn't retry a 4xx, and for a live playlist it may just stop
       // reloading without a fatal error, so catch the first 401/403 of any kind.
       let expired = false
+      // hls.js gives up after a few seconds of failed requests; a backend
+      // restart or a network blip takes longer, so keep resuming for a while.
+      let attempts = 0
+      let retryTimer: ReturnType<typeof setTimeout> | undefined
+      const recovered = () => {
+        attempts = 0
+      }
+      hls.on(Hls.Events.FRAG_LOADED, recovered)
+      hls.on(Hls.Events.LEVEL_LOADED, recovered)
       hls.on(Hls.Events.ERROR, (_event, data) => {
         const status = data.response?.code
         if ((status === 401 || status === 403) && onExpiredRef.current) {
           if (!expired) onExpiredRef.current()
           expired = true
-        } else if (data.fatal) {
-          setFailed(true)
+          return
         }
+        if (!data.fatal) return
+        if (attempts >= RECOVER_ATTEMPTS) {
+          setFailed(true)
+          return
+        }
+        attempts += 1
+        if (data.type === Hls.ErrorTypes.MEDIA_ERROR) hls.recoverMediaError()
+        else retryTimer = setTimeout(() => hls.startLoad(), RECOVER_DELAY_MS)
       })
       hls.loadSource(src)
       hls.attachMedia(video)
       return () => {
+        clearTimeout(retryTimer)
         hls.destroy()
         hlsRef.current = null
       }
