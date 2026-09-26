@@ -101,7 +101,7 @@ export default function IncidentPanel({ cameraId, signedIn, onSignIn, onIncident
   }, [signedIn, incident, onIncident, saveAttempt])
 
   return (
-    <div className="mt-6 border-t border-line px-6 pt-5">
+    <div className="mt-1 px-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div className="max-w-md">
           <p className="font-medium tracking-tight">In an incident?</p>

@@ -1,5 +1,15 @@
+// All cameras are in Miami, so times are shown in Miami's zone whatever the
+// viewer's machine is set to. The zone name follows daylight saving: EDT or EST.
+const CAMERA_TIME_ZONE = 'America/New_York'
+
 export function formatClock(ms: number) {
-  return new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' })
+  return new Date(ms).toLocaleTimeString('en-US', {
+    timeZone: CAMERA_TIME_ZONE,
+    hour: 'numeric',
+    minute: '2-digit',
+    second: '2-digit',
+    timeZoneName: 'short',
+  })
 }
 
 export function formatDuration(seconds: number) {
