@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { DownloadIcon, TrashIcon } from '../components/ClipIcons'
 import ClipModal from '../components/ClipModal'
+import DeleteClipDialog from '../components/DeleteClipDialog'
 import Header from '../components/Header'
 import MapBackdrop from '../components/MapBackdrop'
 import SignInDialog from '../components/SignInDialog'
@@ -11,6 +13,7 @@ import { api } from '../lib/api'
 import type { Incident } from '../lib/api/types'
 import { signInWithGoogle, signOut } from '../lib/auth'
 import { cameraNumber, cameraPlaces } from '../lib/cameras'
+import { downloadClip } from '../lib/clips'
 import { formatClock, formatClockRange, formatDay, formatDuration } from '../lib/format'
 import { OUTLINE_PILL } from '../lib/styles'
 import { useUser } from '../lib/useUser'
@@ -45,16 +48,55 @@ function Tag({ children }: { children: string }) {
   return <span className="rounded-md bg-surface px-2 py-1 text-xs font-medium text-muted">{children}</span>
 }
 
-function IncidentCard({ incident, onOpen }: { incident: Incident; onOpen: () => void }) {
+// Outlined button for a card's Download and Delete.
+const CARD_ACTION =
+  'flex h-9 flex-1 items-center justify-center gap-2 rounded-md border border-line bg-white/60 px-3 text-sm font-medium transition-colors sm:flex-none'
+
+function IncidentCard({
+  incident,
+  onOpen,
+  onDeleted,
+}: {
+  incident: Incident
+  onOpen: () => void
+  onDeleted: (incident: Incident) => void
+}) {
   const camera = cameraPlaces.find((c) => c.id === incident.camera_id)
   const ready = incident.processing_state === 'ready'
+  // A failed clip can't be opened, so the card is the only place to delete it.
+  const deletable = ready || incident.processing_state === 'failed'
+  const [downloading, setDownloading] = useState(false)
+  const [downloadError, setDownloadError] = useState<string | null>(null)
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
+
+  async function download() {
+    setDownloading(true)
+    setDownloadError(null)
+    try {
+      await downloadClip(incident, null)
+    } catch {
+      setDownloadError('Could not download the clip. Try again.')
+    } finally {
+      setDownloading(false)
+    }
+  }
+
   return (
-    <button
-      type="button"
-      onClick={onOpen}
-      disabled={!ready}
-      className="glass-card flex w-full flex-col gap-4 rounded-xl border border-white/70 p-3 text-left transition-colors enabled:hover:border-white sm:flex-row sm:gap-5"
+    <div
+      className={`glass-card relative flex w-full flex-col gap-4 rounded-xl border border-white/70 p-3 transition-colors sm:flex-row sm:gap-5 ${
+        ready ? 'hover:border-white' : ''
+      }`}
     >
+      {/* Covers the whole card, so a click anywhere opens the clip. The
+          Download and Delete buttons sit above it. */}
+      {ready && (
+        <button
+          type="button"
+          onClick={onOpen}
+          aria-label={`Play clip from ${incident.camera_name}`}
+          className="absolute inset-0 z-10 rounded-xl"
+        />
+      )}
       {/* A still from the clip at the press, like the camera list's snapshots. */}
       <Thumbnail
         src={ready ? (incident.thumbnail_url ?? null) : null}
@@ -80,13 +122,41 @@ function IncidentCard({ incident, onOpen }: { incident: Incident; onOpen: () => 
         <p className="mt-1 text-lg font-medium tracking-tight">{incident.camera_name}</p>
         <p className="text-sm tabular-nums text-muted">{recordedLine(incident)}</p>
         <p className="text-sm tabular-nums text-muted">Saved at {formatClock(Date.parse(incident.trigger_at))}</p>
-        <div className="mt-auto flex flex-wrap gap-2 pt-3">
+        <div className="mt-auto flex flex-wrap items-center gap-2 pt-3">
           <Tag>{STATUS[incident.processing_state]}</Tag>
           <Tag>{incident.source_type === 'replay' ? 'Replayed recording' : 'Live camera'}</Tag>
           {incident.duration_seconds !== null && <Tag>{formatDuration(incident.duration_seconds)}</Tag>}
         </div>
+        {downloadError && <p className="mt-2 text-sm text-rec">{downloadError}</p>}
       </div>
-    </button>
+      {/* Stacked beside the details, centered like the thumbnail. */}
+      {deletable && (
+        <div className="relative z-20 flex gap-2 px-1 sm:w-36 sm:shrink-0 sm:flex-col sm:self-center sm:px-0">
+          {ready && (
+            <button
+              type="button"
+              onClick={download}
+              disabled={downloading}
+              className={`${CARD_ACTION} hover:bg-white disabled:opacity-60`}
+            >
+              <DownloadIcon />
+              {downloading ? 'Downloading...' : 'Download'}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setConfirmingDelete(true)}
+            className={`${CARD_ACTION} hover:border-rec/40 hover:text-rec`}
+          >
+            <TrashIcon />
+            Delete
+          </button>
+        </div>
+      )}
+      {confirmingDelete && (
+        <DeleteClipDialog incident={incident} onCancel={() => setConfirmingDelete(false)} onDeleted={onDeleted} />
+      )}
+    </div>
   )
 }
 
@@ -164,7 +234,7 @@ function SavedList({ onDeleted }: { onDeleted: (incident: Incident) => void }) {
       <ul className="mt-8 space-y-3">
         {incidents.map((incident) => (
           <li key={incident.id}>
-            <IncidentCard incident={incident} onOpen={() => setOpenId(incident.id)} />
+            <IncidentCard incident={incident} onOpen={() => setOpenId(incident.id)} onDeleted={removeClip} />
           </li>
         ))}
       </ul>
