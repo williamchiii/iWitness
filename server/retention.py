@@ -1,0 +1,141 @@
+"""Delete temporary segments outside a camera's configured buffer window."""
+
+from __future__ import annotations
+
+from datetime import timedelta
+import logging
+from pathlib import Path
+import threading
+
+try:
+    from . import db
+except ImportError:
+    # Supports ``uvicorn main:app`` when launched from the server directory.
+    import db
+
+
+logger = logging.getLogger(__name__)
+
+
+class RetentionWorker:
+    """Maintain the temporary segment window for one camera."""
+
+    def __init__(
+        self,
+        camera_id: str,
+        server_root: Path,
+        media_root: Path,
+        buffer_seconds: int,
+        poll_seconds: float = 5.0,
+    ) -> None:
+        if buffer_seconds <= 0:
+            raise ValueError("buffer_seconds must be greater than zero")
+        if poll_seconds <= 0:
+            raise ValueError("poll_seconds must be greater than zero")
+
+        self.camera_id = camera_id
+        self.server_root = server_root.resolve()
+        self.media_root = media_root.resolve()
+        self.buffer_seconds = buffer_seconds
+        self.poll_seconds = poll_seconds
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    @property
+    def is_running(self) -> bool:
+        return self._thread is not None and self._thread.is_alive()
+
+    def start(self) -> None:
+        if self.is_running:
+            raise RuntimeError(f"retention worker for {self.camera_id!r} is already running")
+
+        self._stop_event.clear()
+        self._thread = threading.Thread(
+            target=self._run,
+            name=f"retention-{self.camera_id}",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def stop(self, timeout_seconds: float = 10.0) -> None:
+        self._stop_event.set()
+        if self._thread is not None:
+            self._thread.join(timeout=timeout_seconds)
+
+    def _run(self) -> None:
+        while not self._stop_event.is_set():
+            try:
+                self.cleanup_once()
+            except Exception:
+                logger.exception("Retention cleanup failed for camera %s", self.camera_id)
+            self._stop_event.wait(self.poll_seconds)
+
+    def cleanup_once(self) -> int:
+        """Delete expired temporary segments and return the deleted count."""
+
+        with db.connect() as connection:
+            latest_row = connection.execute(
+                """
+                SELECT max(actual_end)
+                FROM segment
+                WHERE camera_id = %s
+                """,
+                (self.camera_id,),
+            ).fetchone()
+
+        latest_end = latest_row[0] if latest_row else None
+        if latest_end is None:
+            return 0
+
+        cutoff = latest_end - timedelta(seconds=self.buffer_seconds)
+        with db.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT id, file_path
+                FROM segment
+                WHERE camera_id = %s
+                  AND status = 'temporary'
+                  AND actual_end <= %s
+                ORDER BY actual_end ASC
+                """,
+                (self.camera_id, cutoff),
+            ).fetchall()
+
+        deleted = 0
+        for segment_id, file_path in rows:
+            path = self._safe_media_path(file_path)
+            if path is None:
+                logger.error("Skipping unsafe segment path %s", file_path)
+                continue
+
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                logger.exception("Could not delete segment file %s", path)
+                continue
+
+            with db.connect() as connection:
+                result = connection.execute(
+                    """
+                    DELETE FROM segment
+                    WHERE id = %s
+                      AND camera_id = %s
+                      AND status = 'temporary'
+                    """,
+                    (segment_id, self.camera_id),
+                )
+                removed = result.rowcount == 1
+
+            if removed:
+                deleted += 1
+                logger.info("Removed expired segment %s", file_path)
+
+        return deleted
+
+    def _safe_media_path(self, file_path: str) -> Path | None:
+        candidate = (self.server_root / file_path).resolve()
+        try:
+            candidate.relative_to(self.media_root)
+        except ValueError:
+            return None
+        return candidate
