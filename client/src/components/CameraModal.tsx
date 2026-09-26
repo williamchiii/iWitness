@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { SAMPLE_STREAM_URL } from '../lib/cameras'
 import type { Camera } from '../lib/cameras'
 import type { Incident } from '../lib/mock'
@@ -21,22 +21,24 @@ export default function CameraModal({ camera, number, signedIn, onSignIn, onClos
     const pending = readPendingIncident()
     return pending?.cameraId === camera.id ? pending : null
   })
-  const unsaved = incident !== null && !incident.saved
+  const [busy, setBusy] = useState(false)
+  // Block closing while a press is in flight, too: otherwise the panel
+  // can unmount before it knows whether the incident needs to be kept.
+  const unsaved = busy || (incident !== null && !incident.saved)
 
-  function requestClose() {
+  const requestClose = useCallback(() => {
     if (unsaved && !window.confirm('Leave without saving? Footage you have not saved will be deleted.')) return
     onClose()
-  }
+  }, [unsaved, onClose])
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key !== 'Escape') return
-      if (unsaved && !window.confirm('Leave without saving? Footage you have not saved will be deleted.')) return
-      onClose()
+      requestClose()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [unsaved, onClose])
+  }, [requestClose])
 
   return (
     <div
@@ -78,6 +80,7 @@ export default function CameraModal({ camera, number, signedIn, onSignIn, onClos
           onSaved={onSaved}
           incident={incident}
           onIncident={setIncident}
+          onBusyChange={setBusy}
         />
       </div>
     </div>
