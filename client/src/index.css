@@ -119,3 +119,17 @@ body {
     transform: scaleX(0);
   }
 }
+
+/* Library page backdrop (components/MapBackdrop.tsx): the same grey map, faded
+   further, with the attribution still clickable through the inert backdrop. */
+.map-backdrop.leaflet-container {
+  background: #fff;
+}
+
+.map-backdrop .leaflet-tile-pane {
+  opacity: 0.55;
+}
+
+.map-backdrop .leaflet-control-attribution {
+  pointer-events: auto;
+}

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import ClipModal from '../components/ClipModal'
 import Header from '../components/Header'
+import MapBackdrop from '../components/MapBackdrop'
 import SignInDialog from '../components/SignInDialog'
 import Toast from '../components/Toast'
 import type { ToastMessage } from '../components/Toast'
@@ -51,9 +52,9 @@ function IncidentCard({ incident, onOpen }: { incident: Incident; onOpen: () => 
       type="button"
       onClick={onOpen}
       disabled={!ready}
-      className="flex w-full flex-col gap-4 rounded-xl border border-line p-3 text-left transition-colors enabled:hover:border-ink/30 sm:flex-row sm:gap-5"
+      className="glass-card flex w-full flex-col gap-4 rounded-xl border border-white/70 p-3 text-left transition-colors enabled:hover:border-white sm:flex-row sm:gap-5"
     >
-      <div className="grid aspect-video w-full shrink-0 place-items-center self-start rounded-lg bg-surface text-ink sm:w-48">
+      <div className="grid aspect-video w-full shrink-0 place-items-center self-start rounded-lg bg-white/60 text-ink sm:w-48">
         {ready ? (
           <span className="grid size-10 place-items-center rounded-full bg-white shadow-sm">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
@@ -120,7 +121,7 @@ function SavedList() {
 
   if (error) {
     return (
-      <div className="mt-8 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-line p-6">
+      <div className="glass-card mt-8 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-white/70 p-6">
         <p className="text-sm text-rec">{error}</p>
         <button type="button" onClick={() => setAttempt((n) => n + 1)} className={OUTLINE_PILL}>
           Try again
@@ -133,7 +134,7 @@ function SavedList() {
 
   if (incidents.length === 0) {
     return (
-      <div className="mt-8 rounded-xl border border-line p-6">
+      <div className="glass-card mt-8 rounded-xl border border-white/70 p-6">
         <p className="font-medium">No recordings yet.</p>
         <p className="mt-1 text-sm text-muted">Open a camera and press Save recording to keep the footage here.</p>
         <Link to="/" className={`mt-4 inline-block ${OUTLINE_PILL}`}>
@@ -173,15 +174,17 @@ export default function SavedIncidentsPage() {
   return (
     <div className="relative h-full">
       <Header user={user} link={{ to: '/', label: 'Cameras' }} onLogIn={() => setShowSignIn(true)} onLogOut={logOut} />
-      <main className="h-full overflow-y-auto">
-        <div className="mx-auto max-w-3xl px-6 pb-12 pt-28 md:pt-32">
+      <MapBackdrop />
+      <main className="relative z-10 h-full overflow-y-auto px-4 pb-12 pt-28 md:pt-32">
+        {/* Same frosted panel as the camera list, floating over the map. */}
+        <div className="glass-pane mx-auto max-w-3xl rounded-2xl border border-white/60 p-6 md:p-8">
           <h1 className="text-3xl font-medium tracking-tight">Library</h1>
           <p className="mt-1 text-muted">Recordings you saved. Only you can see them.</p>
 
           {!ready && <p className="mt-8 text-sm text-muted">Loading...</p>}
 
           {ready && !user && (
-            <div className="mt-8 rounded-xl border border-line p-6">
+            <div className="glass-card mt-8 rounded-xl border border-white/70 p-6">
               <p className="font-medium">Log in to see your recordings.</p>
               <p className="mt-1 text-sm text-muted">Saved clips are private to your account.</p>
               <button

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { api } from '../lib/api'
 import type { Incident, Playback } from '../lib/api/types'
 import { cameraNumber, cameras } from '../lib/cameras'
@@ -15,7 +16,9 @@ function sourceLabel(incident: Incident) {
 }
 
 // One saved clip: player plus the details the brief asks for. Playback is only
-// requested here, when a clip is opened, never for the whole list.
+// requested here, when a clip is opened, never for the whole list. Rendered on
+// document.body: the Library's frosted panel (backdrop-filter) would otherwise
+// become the containing block for this fixed overlay and trap it inside the panel.
 export default function ClipModal({ incident, onClose }: Props) {
   const [playback, setPlayback] = useState<Playback | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -48,7 +51,7 @@ export default function ClipModal({ incident, onClose }: Props) {
   const end = Date.parse(incident.actual_end!)
   const trigger = Date.parse(incident.trigger_at)
 
-  return (
+  return createPortal(
     <div
       className="fixed inset-0 z-[2000] flex items-center justify-center bg-black/20 p-4 backdrop-blur-md"
       onClick={onClose}
@@ -117,6 +120,7 @@ export default function ClipModal({ incident, onClose }: Props) {
           This camera may not show your vehicle. Footage gives context, not proof of fault.
         </p>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
