@@ -9,6 +9,9 @@ export interface CameraPlace {
   keywords: string[]
   lat: number
   lng: number
+  // FDOT's latest still of this camera (the IMAGE field in the layer below),
+  // refreshed about every 2 minutes. Public, no token needed.
+  snapshot: string
 }
 
 // A camera the backend lists, placed on the map.
@@ -22,11 +25,11 @@ export interface Camera extends CameraPlace {
 // position as listed there). The number in each id is the FL511 camera ID.
 // The backend's camera table has the same ids (server/migrations/003_i95_cameras.sql).
 export const cameraPlaces: CameraPlace[] = [
-  { id: 'fl511-760', name: 'I-95 at NW 13th St', direction: 'Southbound', keywords: ['Downtown', 'Overtown'], lat: 25.78645, lng: -80.20316 },
-  { id: 'fl511-733', name: 'I-95 at NW 6th St', direction: 'Northbound', keywords: ['Downtown', 'Overtown'], lat: 25.7796, lng: -80.20012 },
-  { id: 'fl511-1329', name: 'I-95 at SW 8th St', direction: 'Southbound', keywords: ['Brickell', 'Calle Ocho', 'Little Havana', 'Miami River'], lat: 25.76609, lng: -80.20063 },
-  { id: 'fl511-1428', name: 'I-95 at SW 20th Rd', direction: 'Southbound', keywords: ['Brickell', 'The Roads'], lat: 25.75612, lng: -80.20084 },
-  { id: 'fl511-736', name: 'I-95 at SW 26th Rd', direction: 'Southbound', keywords: ['Brickell', 'The Roads', 'Rickenbacker', 'US-1'], lat: 25.75234, lng: -80.20623 },
+  { id: 'fl511-760', name: 'I-95 at NW 13th St', direction: 'Southbound', keywords: ['Downtown', 'Overtown'], lat: 25.78645, lng: -80.20316, snapshot: 'https://images-dis.divas.cloud/DGI/chan-3725_h.jpg' },
+  { id: 'fl511-733', name: 'I-95 at NW 6th St', direction: 'Northbound', keywords: ['Downtown', 'Overtown'], lat: 25.7796, lng: -80.20012, snapshot: 'https://images-dis.divas.cloud/DGI/chan-3703_h.jpg' },
+  { id: 'fl511-1329', name: 'I-95 at SW 8th St', direction: 'Southbound', keywords: ['Brickell', 'Calle Ocho', 'Little Havana', 'Miami River'], lat: 25.76609, lng: -80.20063, snapshot: 'https://images-dis.divas.cloud/DGI/chan-3705_h.jpg' },
+  { id: 'fl511-1428', name: 'I-95 at SW 20th Rd', direction: 'Southbound', keywords: ['Brickell', 'The Roads'], lat: 25.75612, lng: -80.20084, snapshot: 'https://images-dis.divas.cloud/DGI/chan-260_h.jpg' },
+  { id: 'fl511-736', name: 'I-95 at SW 26th Rd', direction: 'Southbound', keywords: ['Brickell', 'The Roads', 'Rickenbacker', 'US-1'], lat: 25.75234, lng: -80.20623, snapshot: 'https://images-dis.divas.cloud/DGI/chan-259_h.jpg' },
 ]
 
 // The backend decides which cameras exist, what they're called, and whether they're
@@ -44,7 +47,3 @@ export function placeCameras(listed: ListedCamera[]): Camera[] {
 export function cameraNumber(id: string) {
   return cameraPlaces.findIndex((c) => c.id === id) + 1
 }
-
-// Public live test stream (Unified Streaming demo) with a burned-in clock and a
-// ~10 min rewind window. Stands in for the camera list's preview frames.
-export const SAMPLE_STREAM_URL = 'https://demo.unified-streaming.com/k8s/live/stable/live.isml/.m3u8'
