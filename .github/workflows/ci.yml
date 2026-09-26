@@ -49,3 +49,6 @@ jobs:
       - run: pip install -r requirements.txt ruff
       - run: ruff check .
       - run: python -c "import main"
+      # A glob rather than `unittest discover`: tests/ has no __init__.py, so
+      # discovery cannot import it as a start directory.
+      - run: python -m unittest tests/test_*.py
