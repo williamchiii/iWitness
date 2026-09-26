@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import os
 from pathlib import Path
+import secrets
 
 from dotenv import load_dotenv
 
@@ -38,6 +39,7 @@ class Settings:
     database_url: str | None
     media_root: Path
     ffmpeg_binary: str
+    playback_signing_secret: str
     segment_seconds: int
     buffer_seconds: int
     pre_trigger_seconds: int
@@ -50,6 +52,10 @@ class Settings:
             database_url=os.getenv("DATABASE_URL"),
             media_root=_path_from_env("MEDIA_ROOT", "media"),
             ffmpeg_binary=os.getenv("FFMPEG_BINARY", "ffmpeg"),
+            playback_signing_secret=os.getenv(
+                "PLAYBACK_SIGNING_SECRET",
+                secrets.token_urlsafe(32),
+            ),
             segment_seconds=_positive_int("SEGMENT_SECONDS", 10),
             buffer_seconds=_positive_int("BUFFER_SECONDS", 300),
             pre_trigger_seconds=_positive_int("PRE_TRIGGER_SECONDS", 60),

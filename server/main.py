@@ -5,16 +5,19 @@ from typing import Any
 
 from fastapi import FastAPI
 
-import db
 try:
+    from . import db
     from .config import SERVER_ROOT, settings
+    from .api import router
     from .recorder import CameraRecorder, RecorderConfig
     from .retention import RetentionWorker
     from .segment_tracker import SegmentTracker
 except ImportError:
     # Supports ``uvicorn main:app`` when launched from the server directory.
+    import db
     from config import SERVER_ROOT, settings
     from recorder import CameraRecorder, RecorderConfig
+    from api import router
     from retention import RetentionWorker
     from segment_tracker import SegmentTracker
 
@@ -135,6 +138,7 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+app.include_router(router)
 
 @app.post("/health")
 def health():
