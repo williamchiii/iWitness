@@ -3,19 +3,38 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from contextlib import contextmanager
 import os
+from pathlib import Path
+import shutil
 import unittest
 from typing import Any
+from types import SimpleNamespace
+from unittest.mock import patch
+from uuid import uuid4
 
 os.environ.setdefault("PLAYBACK_SIGNING_SECRET", "incident-worker-test-secret")
 
 try:
+    import server.incident_worker as worker_module
     from server.incident_worker import IncidentWorker
 except ModuleNotFoundError:
+    import incident_worker as worker_module
     from incident_worker import IncidentWorker
 
 
 UTC = timezone.utc
+
+
+@contextmanager
+def _workspace_directory():
+    base = Path(__file__).resolve().parents[1] / "media" / ".test-expiry"
+    directory = base / str(uuid4())
+    directory.mkdir(parents=True, exist_ok=False)
+    try:
+        yield directory
+    finally:
+        shutil.rmtree(directory, ignore_errors=True)
 
 
 class _Result:
@@ -36,10 +55,16 @@ class _FakeDatabase:
         incidents: list[tuple[Any, ...]],
         latest_by_incident: dict[str, Any],
         expired: list[tuple[Any, ...]] | None = None,
+        exclusive: list[tuple[Any, ...]] | None = None,
+        shared: list[str] | None = None,
+        newly_shared: list[str] | None = None,
     ) -> None:
         self.incidents = incidents
         self.latest_by_incident = latest_by_incident
         self.expired = expired or []
+        self.exclusive = exclusive or []
+        self.shared = shared or []
+        self.newly_shared = newly_shared or []
         self.preserve_calls: list[tuple[Any, ...]] = []
         self.association_calls: list[tuple[Any, ...]] = []
         self.expiry_calls: list[str] = []
@@ -57,6 +82,15 @@ class _FakeDatabase:
         normalized = " ".join(query.split()).lower()
         if normalized.startswith("select id, storage_path"):
             return _Result(rows=self.expired)
+        if normalized.startswith("select s.id, s.file_path"):
+            self.expiry_calls.append("select exclusive")
+            return _Result(rows=self.exclusive)
+        if normalized.startswith("select 1 from incident_segment"):
+            self.expiry_calls.append("recheck")
+            return _Result(row=(1,) if params[0] in self.newly_shared else None)
+        if normalized.startswith("delete from segment"):
+            self.expiry_calls.append("delete segment")
+            return _Result()
         if normalized.startswith("select id, camera_id"):
             return _Result(rows=self.incidents)
         if normalized.startswith("update segment"):
@@ -70,7 +104,7 @@ class _FakeDatabase:
             return _Result()
         if normalized.startswith("delete from incident_segment"):
             self.expiry_calls.append("unlink")
-            return _Result(rows=[("segment-shared",)])
+            return _Result(rows=[(segment_id,) for segment_id in self.shared])
         if normalized.startswith("select max(s.actual_end)"):
             incident_id = str(params[0])
             return _Result((self.latest_by_incident.get(incident_id),))
@@ -160,14 +194,71 @@ class IncidentWorkerTests(unittest.TestCase):
         )
         self.assertIn("incident-ready", "\n".join(logs.output))
 
-    def test_expiry_releases_segments_before_retention(self) -> None:
-        database = _FakeDatabase([], {}, expired=[("incident-expired", None)])
+    def test_expiry_deletes_exclusive_files_and_keeps_overlapping_segment(self) -> None:
+        with _workspace_directory() as root:
+            camera = root / "media" / "cameras" / "camera-demo"
+            incident = root / "media" / "incidents" / "incident-expired"
+            camera.mkdir(parents=True)
+            incident.mkdir(parents=True)
+            exclusive_file = camera / "exclusive.ts"
+            shared_file = camera / "shared.ts"
+            clip = incident / "clip.mp4"
+            partial_clip = incident / "clip.tmp.mp4"
+            manifest = incident / "segments.concat.txt"
+            for path in (exclusive_file, shared_file, clip, partial_clip, manifest):
+                path.write_bytes(b"video")
+            database = _FakeDatabase(
+                [], {}, expired=[("incident-expired", "media/incidents/incident-expired/clip.mp4")],
+                exclusive=[("segment-exclusive", "media/cameras/camera-demo/exclusive.ts", "camera-demo")],
+                shared=["segment-shared"],
+            )
+            settings = SimpleNamespace(cameras_root=root / "media" / "cameras", incidents_root=root / "media" / "incidents")
+            with patch.object(worker_module, "SERVER_ROOT", root), patch.object(worker_module, "settings", settings):
+                submitted = IncidentWorker(database=database, processor=_Processor()).run_once()
 
-        submitted = IncidentWorker(database=database, processor=_Processor()).run_once()
+            self.assertEqual(submitted, 0)
+            self.assertFalse(exclusive_file.exists())
+            self.assertFalse(clip.exists())
+            self.assertFalse(partial_clip.exists())
+            self.assertFalse(manifest.exists())
+            self.assertTrue(shared_file.exists())
+            self.assertEqual(database.expiry_calls, ["select exclusive", "recheck", "delete segment", "expire", "unlink"])
+            self.assertEqual(database.preserve_calls, [(["segment-shared"],)])
 
-        self.assertEqual(submitted, 0)
-        self.assertEqual(database.expiry_calls, ["expire", "unlink"])
-        self.assertEqual(database.preserve_calls, [(["segment-shared"],)])
+    def test_expiry_rejects_segment_path_outside_camera(self) -> None:
+        with _workspace_directory() as root:
+            unrelated = root / "unrelated.ts"
+            unrelated.write_bytes(b"keep")
+            database = _FakeDatabase(
+                [], {}, expired=[("incident-expired", None)],
+                exclusive=[("segment-exclusive", "unrelated.ts", "camera-demo")],
+            )
+            settings = SimpleNamespace(cameras_root=root / "media" / "cameras", incidents_root=root / "media" / "incidents")
+            with patch.object(worker_module, "SERVER_ROOT", root), patch.object(worker_module, "settings", settings):
+                with self.assertRaisesRegex(ValueError, "Unsafe expired segment path"):
+                    IncidentWorker(database=database, processor=_Processor()).run_once()
+
+            self.assertTrue(unrelated.exists())
+            self.assertEqual(database.expiry_calls, ["select exclusive", "recheck"])
+
+    def test_expiry_rechecks_shared_link_after_locking_segment(self) -> None:
+        with _workspace_directory() as root:
+            camera = root / "media" / "cameras" / "camera-demo"
+            camera.mkdir(parents=True)
+            segment_file = camera / "newly-shared.ts"
+            segment_file.write_bytes(b"video")
+            database = _FakeDatabase(
+                [], {}, expired=[("incident-expired", None)],
+                exclusive=[("segment-newly-shared", "media/cameras/camera-demo/newly-shared.ts", "camera-demo")],
+                shared=["segment-newly-shared"],
+                newly_shared=["segment-newly-shared"],
+            )
+            settings = SimpleNamespace(cameras_root=root / "media" / "cameras", incidents_root=root / "media" / "incidents")
+            with patch.object(worker_module, "SERVER_ROOT", root), patch.object(worker_module, "settings", settings):
+                IncidentWorker(database=database, processor=_Processor()).run_once()
+
+            self.assertTrue(segment_file.exists())
+            self.assertNotIn("delete segment", database.expiry_calls)
 
 
 if __name__ == "__main__":
