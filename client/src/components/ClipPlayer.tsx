@@ -32,7 +32,9 @@ export default function ClipPlayer({ src, startMs, triggerMs, labels }: Props) {
 
   useEffect(() => {
     const video = videoRef.current!
-    if (Hls.isSupported()) {
+    // The backend serves saved clips as MP4, which the video element plays by itself.
+    const isHls = new URL(src, window.location.href).pathname.endsWith('.m3u8')
+    if (isHls && Hls.isSupported()) {
       const hls = new Hls()
       hlsRef.current = hls
       hls.on(Hls.Events.ERROR, (_event, data) => {
@@ -45,7 +47,7 @@ export default function ClipPlayer({ src, startMs, triggerMs, labels }: Props) {
         hlsRef.current = null
       }
     }
-    // Safari without MSE plays HLS natively.
+    // MP4, or HLS on Safari without MSE, which plays it natively.
     video.src = src
     return () => {
       video.removeAttribute('src')

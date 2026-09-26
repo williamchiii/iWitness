@@ -11,6 +11,9 @@ export default defineConfig({
         target: 'http://localhost:8000',
         rewrite: (path) => path.replace(/^\/api/, ''),
       },
+      // Signed video URLs from the backend (buffer playlists, their segments,
+      // saved clips) are built from the request's host with no /api prefix.
+      '/playback': 'http://localhost:8000',
     },
   },
 })

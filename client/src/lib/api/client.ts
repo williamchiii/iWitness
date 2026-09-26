@@ -23,7 +23,8 @@ export class ApiError extends Error {
 // One function per endpoint in docs/api_contract.md. `signedIn` stands in for
 // sending `Authorization: Bearer <token>`: there's only ever one signed-in
 // account in this demo, so a boolean is enough for the mock to decide what to
-// allow. A real HTTP client sends getAccessToken() from lib/auth.ts instead.
+// allow. HttpApiClient (./http.ts) ignores it and sends getAccessToken()
+// from lib/auth.ts instead.
 export interface ApiClient {
   listCameras(): Promise<Camera[]>
   // The contract allows an optional Authorization here to set the trip's
