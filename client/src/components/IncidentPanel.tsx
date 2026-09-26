@@ -13,6 +13,8 @@ interface Props {
   onIncident: (incident: Incident | null) => void
   // Called once the incident is attached to the user's account.
   onSaved: (incident: Incident) => void
+  // Lets the modal block closing while a press is in flight.
+  onBusyChange: (busy: boolean) => void
   incident: Incident | null
 }
 
@@ -59,7 +61,15 @@ function Pending({ incident, signedIn, onLogIn }: { incident: Incident; signedIn
   )
 }
 
-export default function IncidentPanel({ cameraId, signedIn, onSignIn, onIncident, onSaved, incident }: Props) {
+export default function IncidentPanel({
+  cameraId,
+  signedIn,
+  onSignIn,
+  onIncident,
+  onSaved,
+  onBusyChange,
+  incident,
+}: Props) {
   const [busy, setBusy] = useState(false)
   const [showLogIn, setShowLogIn] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
@@ -76,14 +86,18 @@ export default function IncidentPanel({ cameraId, signedIn, onSignIn, onIncident
 
   async function press() {
     setBusy(true)
+    onBusyChange(true)
     setSaveError(null)
     const reported = await reportIncident(cameraId, signedIn)
-    // The camera was closed while this was in flight: don't bring the incident back.
-    if (!mounted.current) return
     if (!reported.saved) storePendingIncident(reported)
+    // The camera was closed while this was in flight: the incident is
+    // already persisted above, so skip the remaining state updates
+    // rather than touching an unmounted component.
+    if (!mounted.current) return
     onIncident(reported)
     if (reported.saved) onSaved(reported)
     setBusy(false)
+    onBusyChange(false)
     if (!reported.saved) setShowLogIn(true)
   }
 
