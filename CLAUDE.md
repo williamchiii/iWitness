@@ -52,7 +52,7 @@ uvicorn main:app --reload --port 8000        # or: fastapi dev main.py
 ruff check .                                 # pip install ruff; config in server/ruff.toml
 ```
 
-CI (`.github/workflows/ci.yml`, GitHub Actions) runs on push to `main` and on PRs: client `npm ci` + lint + build; server `ruff check` + start uvicorn against a throwaway Postgres service and `POST /health`. Keep both green.
+CI (`.github/workflows/ci.yml`, GitHub Actions) runs on pull requests and manual dispatch: client `npm ci` + lint + build; server `ruff check` + `python -c "import main"`. No database in CI. Keep both green.
 
 ## Auth model: watch anonymously, sign in to save
 
