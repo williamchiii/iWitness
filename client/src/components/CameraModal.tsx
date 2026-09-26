@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { SAMPLE_STREAM_URL } from '../lib/cameras'
 import type { Camera } from '../lib/cameras'
-import type { Incident } from '../lib/mock'
+import { api } from '../lib/api'
+import type { Incident, StartTripResponse } from '../lib/api/types'
 import { readPendingIncident } from '../lib/pendingIncident'
 import IncidentPanel from './IncidentPanel'
 import Player from './Player'
@@ -16,15 +17,27 @@ interface Props {
 }
 
 export default function CameraModal({ camera, number, signedIn, onSignIn, onClose, onSaved }: Props) {
+  // One trip per time this camera is opened; used to gate the buffer and
+  // scope the incident button. Started immediately so a press doesn't have
+  // to wait on it separately - see IncidentPanel.press().
+  const [tripPromise] = useState<Promise<StartTripResponse>>(() => api.startTrip(camera.id))
+
   // Resume an incident pressed on this camera before the Google redirect or a reload.
   const [incident, setIncident] = useState<Incident | null>(() => {
     const pending = readPendingIncident()
-    return pending?.cameraId === camera.id ? pending : null
+    return pending?.incident.camera_id === camera.id ? pending.incident : null
+  })
+  // The trip token that authorizes claiming `incident` - the token from
+  // *when it was pressed*, not necessarily this mount's fresh trip (the
+  // Google redirect remounts everything, starting a new trip).
+  const [tripToken, setTripToken] = useState<string | null>(() => {
+    const pending = readPendingIncident()
+    return pending?.incident.camera_id === camera.id ? pending.tripToken : null
   })
   const [busy, setBusy] = useState(false)
   // Block closing while a press is in flight, too: otherwise the panel
   // can unmount before it knows whether the incident needs to be kept.
-  const unsaved = busy || (incident !== null && !incident.saved)
+  const unsaved = busy || (incident !== null && incident.claim_state !== 'claimed')
 
   const requestClose = useCallback(() => {
     if (unsaved && !window.confirm('Leave without saving? Footage you have not saved will be deleted.')) return
@@ -74,12 +87,14 @@ export default function CameraModal({ camera, number, signedIn, onSignIn, onClos
         </div>
         <Player src={SAMPLE_STREAM_URL} labels={['Sample stream']} />
         <IncidentPanel
-          cameraId={camera.id}
+          tripPromise={tripPromise}
           signedIn={signedIn}
           onSignIn={onSignIn}
           onSaved={onSaved}
           incident={incident}
           onIncident={setIncident}
+          tripToken={tripToken}
+          onTripTokenChange={setTripToken}
           onBusyChange={setBusy}
         />
       </div>
