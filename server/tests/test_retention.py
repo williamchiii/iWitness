@@ -12,7 +12,7 @@ from uuid import uuid4
 
 os.environ.setdefault("PLAYBACK_SIGNING_SECRET", "retention-test-secret")
 
-from server import retention
+from server import media_cleanup, retention
 
 
 class _Result:
@@ -33,17 +33,30 @@ class _Connection:
         self.events: list[str] = []
         self.preserve_before_delete = False
         self.fail_delete = False
+        self.pending: list[str] = []
+        self.committed_with_file = False
+        self._deleted_in_transaction = False
 
     def __enter__(self) -> _Connection:
         return self
 
     def __exit__(self, exc_type: object, *_: object) -> None:
         self.events.append("rollback" if exc_type else "commit")
-        # Neither a pending transaction nor a failed one may remove a file.
-        assert all(path.exists() for path in self.files)
+        if self._deleted_in_transaction:
+            self.committed_with_file = all(path.exists() for path in self.files)
+            self._deleted_in_transaction = False
 
     def execute(self, query: str, params: tuple[object, ...]) -> _Result:
         normalized = " ".join(query.split()).lower()
+        if normalized.startswith("select file_path from pending_media_delete"):
+            return _Result([(path,) for path in self.pending])
+        if normalized.startswith("insert into pending_media_delete"):
+            if params[0] not in self.pending:
+                self.pending.append(params[0])
+            return _Result([])
+        if normalized.startswith("delete from pending_media_delete"):
+            self.pending.remove(params[0])
+            return _Result([])
         if normalized.startswith("select max(actual_end)"):
             return _Result([(max(row["end"] for row in self.segments),)])
         if normalized.startswith("select id, file_path"):
@@ -67,6 +80,7 @@ class _Connection:
                 if row["id"] in params[1] and row["status"] == "temporary"
             ]
             self.segments = [row for row in self.segments if row not in removed]
+            self._deleted_in_transaction = bool(removed)
             return _Result([(row["path"],) for row in removed])
         raise AssertionError(f"Unexpected query: {query}")
 
@@ -111,7 +125,7 @@ class RetentionTests(unittest.TestCase):
 
         self.assertEqual(count, 0)
         self.assertTrue(self.old.exists())
-        self.assertEqual(database.events, ["select", "delete", "commit"])
+        self.assertEqual([event for event in database.events if event in ("select", "delete")], ["select", "delete"])
         self.assertIn("status = 'temporary'", database.delete_query)
         self.assertIn("returning file_path", database.delete_query)
         self.assertEqual(database.segments[0]["status"], "preserved")
@@ -122,7 +136,8 @@ class RetentionTests(unittest.TestCase):
             count = self._worker().cleanup_once()
 
         self.assertEqual(count, 1)
-        self.assertEqual(database.events, ["select", "delete", "commit"])
+        self.assertEqual([event for event in database.events if event in ("select", "delete")], ["select", "delete"])
+        self.assertTrue(database.committed_with_file)
         self.assertFalse(self.old.exists())
         self.assertEqual([row["id"] for row in database.segments], ["latest"])
 
@@ -133,7 +148,7 @@ class RetentionTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "database failure"):
                 self._worker().cleanup_once()
 
-        self.assertEqual(database.events, ["select", "delete", "rollback"])
+        self.assertEqual([event for event in database.events if event in ("select", "delete", "rollback")], ["select", "delete", "rollback"])
         self.assertTrue(self.old.exists())
 
     def test_unsafe_candidate_is_skipped(self) -> None:
@@ -143,7 +158,7 @@ class RetentionTests(unittest.TestCase):
                 count = self._worker().cleanup_once()
 
         self.assertEqual(count, 0)
-        self.assertEqual(database.events, ["select", "commit"])
+        self.assertEqual([event for event in database.events if event in ("select", "delete")], ["select"])
         self.assertTrue(self.old.exists())
         self.assertIn("Skipping unsafe segment path outside.ts", "\n".join(logs.output))
 
@@ -152,14 +167,20 @@ class RetentionTests(unittest.TestCase):
         with (
             patch.object(retention.db, "connect", return_value=database),
             patch.object(Path, "unlink", side_effect=OSError("disk error")),
-            self.assertLogs(retention.logger, level="ERROR") as logs,
+            self.assertLogs(media_cleanup.logger, level="ERROR") as logs,
         ):
             count = self._worker().cleanup_once()
 
         self.assertEqual(count, 1)
         self.assertTrue(self.old.exists())
-        self.assertEqual(database.events, ["select", "delete", "commit"])
-        self.assertIn("Could not delete segment file", "\n".join(logs.output))
+        self.assertEqual([event for event in database.events if event in ("select", "delete")], ["select", "delete"])
+        self.assertEqual(database.pending, ["media/cameras/camera-demo/old.ts"])
+        self.assertIn("Could not delete queued media file", "\n".join(logs.output))
+
+        with patch.object(retention.db, "connect", return_value=database):
+            self._worker().cleanup_once()
+        self.assertFalse(self.old.exists())
+        self.assertEqual(database.pending, [])
 
 
 if __name__ == "__main__":
