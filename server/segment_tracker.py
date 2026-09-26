@@ -9,13 +9,8 @@ import logging
 from pathlib import Path
 import threading
 
-try:
-    from . import db
-    from .recorder import CameraRecorder
-except ImportError:
-    # Supports ``uvicorn main:app`` when launched from the server directory.
-    import db
-    from recorder import CameraRecorder
+from . import db
+from .recorder import CameraRecorder
 
 
 logger = logging.getLogger(__name__)

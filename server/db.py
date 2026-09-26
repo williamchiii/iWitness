@@ -1,11 +1,7 @@
 import psycopg
 from collections.abc import Iterator
 
-try:
-    from .config import settings
-except ImportError:
-    # Supports ``uvicorn main:app`` when launched from the server directory.
-    from config import settings
+from .config import settings
 
 DATABASE_URL = settings.database_url
 

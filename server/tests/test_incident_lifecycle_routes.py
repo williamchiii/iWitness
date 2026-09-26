@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
+import base64
 from datetime import datetime, timedelta, timezone
 import hashlib
+import hmac
+import json
 import os
 from typing import Any
 from unittest import TestCase
+from unittest.mock import patch
 from uuid import UUID
 from fastapi import HTTPException
 
@@ -112,6 +117,87 @@ def _trip_row(claim_state: str = "unclaimed", expires_at: datetime | None = None
         expires_at,
         hashlib.sha256(TRIP_TOKEN.encode("utf-8")).hexdigest(),
     )
+
+
+def _signed_token(user_id: UUID) -> str:
+    """Make a locally verifiable access token for an ASGI request."""
+
+    def part(value: dict[str, object]) -> str:
+        data = json.dumps(value, separators=(",", ":")).encode()
+        return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+
+    header = part({"alg": "HS256", "typ": "JWT"})
+    payload = part({
+        "sub": str(user_id),
+        "aud": "authenticated",
+        "exp": int((datetime.now(timezone.utc) + timedelta(minutes=5)).timestamp()),
+    })
+    message = f"{header}.{payload}"
+    signature = hmac.new(b"incident-route-test-secret", message.encode(), hashlib.sha256)
+    return f"{message}.{base64.urlsafe_b64encode(signature.digest()).rstrip(b'=').decode()}"
+
+
+def _asgi_get(app: object, path: str, token: str | None = None) -> tuple[int, Any]:
+    """Send an HTTP GET through the ASGI app without an HTTP client package."""
+
+    headers = [] if token is None else [
+        (b"authorization", f"Bearer {token}".encode())
+    ]
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "GET",
+        "scheme": "http",
+        "path": path,
+        "raw_path": path.encode(),
+        "query_string": b"",
+        "root_path": "",
+        "headers": headers,
+        "client": ("testclient", 0),
+        "server": ("testserver", 80),
+    }
+    messages: list[dict[str, Any]] = []
+
+    async def receive() -> dict[str, Any]:
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message: dict[str, Any]) -> None:
+        messages.append(message)
+
+    asyncio.run(app(scope, receive, send))
+    status = next(message["status"] for message in messages
+                  if message["type"] == "http.response.start")
+    body = b"".join(message.get("body", b"") for message in messages
+                    if message["type"] == "http.response.body")
+    return status, json.loads(body)
+
+
+class _OwnedIncidentsConnection:
+    """Apply the route's SQL owner predicate to two stored incident rows."""
+
+    def __init__(self) -> None:
+        self.rows = {
+            USER_ID: _incident_row(),
+            OTHER_USER_ID: (UUID("55555555-5555-5555-5555-555555555555"),)
+            + _incident_row()[1:],
+        }
+
+    def __enter__(self) -> "_OwnedIncidentsConnection":
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        return None
+
+    def execute(self, query: str, params: tuple[Any, ...]) -> _Result:
+        if "WHERE i.user_id = %s" in query:
+            owner = params[0]
+            return _Result([self.rows[owner]], many=True)
+        if "WHERE i.id = %s AND i.user_id = %s" in query:
+            incident_id, owner = params
+            row = self.rows[owner]
+            return _Result(row if row[0] == incident_id else None)
+        raise AssertionError(f"Owner filter missing from query: {query}")
 
 
 class IncidentLifecycleRouteTests(TestCase):
@@ -265,6 +351,52 @@ class IncidentLifecycleRouteTests(TestCase):
             )
 
         self.assertEqual(raised.exception.status_code, 404)
+
+
+class IncidentLifecycleASGITests(TestCase):
+    """Exercise the mounted routes with signed users and HTTP responses."""
+
+    def test_list_and_detail_are_private_to_verified_user(self) -> None:
+        try:
+            from server.main import app
+        except ModuleNotFoundError:
+            from main import app
+
+        other_incident_id = UUID("55555555-5555-5555-5555-555555555555")
+        with (
+            patch.dict(os.environ, {"SUPABASE_JWT_SECRET": "incident-route-test-secret"},
+                       clear=True),
+            patch.object(lifecycle_routes.db, "connect",
+                         side_effect=_OwnedIncidentsConnection),
+        ):
+            for user_id, own_id, hidden_id in (
+                (USER_ID, INCIDENT_ID, other_incident_id),
+                (OTHER_USER_ID, other_incident_id, INCIDENT_ID),
+            ):
+                token = _signed_token(user_id)
+                list_status, listed = _asgi_get(app, "/incidents", token)
+                self.assertEqual(list_status, 200)
+                self.assertEqual([item["id"] for item in listed], [str(own_id)])
+                self.assertNotIn("user_id", listed[0])
+
+                detail_status, detail = _asgi_get(
+                    app, f"/incidents/{own_id}", token
+                )
+                self.assertEqual(detail_status, 200)
+                self.assertEqual(detail["id"], str(own_id))
+
+                hidden_status, hidden = _asgi_get(
+                    app, f"/incidents/{hidden_id}", token
+                )
+                missing_status, missing = _asgi_get(
+                    app, f"/incidents/{UUID(int=0)}", token
+                )
+                self.assertEqual((hidden_status, hidden), (404, missing))
+                self.assertEqual(missing_status, 404)
+
+            for path in ("/incidents", f"/incidents/{INCIDENT_ID}"):
+                self.assertEqual(_asgi_get(app, path)[0], 401)
+                self.assertEqual(_asgi_get(app, path, "invalid-token")[0], 401)
 
 
 if __name__ == "__main__":

@@ -5,10 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-try:
-    from .schemas import SourceType
-except ImportError:
-    from schemas import SourceType
+from .schemas import SourceType
 
 
 ProcessingState = Literal[

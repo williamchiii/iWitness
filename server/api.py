@@ -17,31 +17,17 @@ import psycopg
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import FileResponse, PlainTextResponse
 
-try:
-    from . import db
-    from .auth import Principal, get_optional_principal
-    from .config import SERVER_ROOT, Settings, get_settings
-    from .schemas import (
-        BufferInfoResponse,
-        CameraResponse,
-        StartTripRequest,
-        StartTripResponse,
-        TripResponse,
-    )
-    from .incident_schemas import IncidentResponse
-except ImportError:
-    # Supports ``uvicorn main:app`` when launched from the server directory.
-    import db
-    from auth import Principal, get_optional_principal
-    from config import SERVER_ROOT, Settings, get_settings
-    from schemas import (
-        BufferInfoResponse,
-        CameraResponse,
-        StartTripRequest,
-        StartTripResponse,
-        TripResponse,
-    )
-    from incident_schemas import IncidentResponse
+from . import db
+from .auth import Principal, get_optional_principal
+from .config import SERVER_ROOT, Settings, get_settings
+from .schemas import (
+    BufferInfoResponse,
+    CameraResponse,
+    StartTripRequest,
+    StartTripResponse,
+    TripResponse,
+)
+from .incident_schemas import IncidentResponse
 
 
 router = APIRouter()
@@ -410,7 +396,7 @@ def buffer_playlist(
     _verify_signature(f"playlist|{trip_id}|{camera_id}", exp, sig, settings)
 
     trip = connection.execute(
-        "SELECT camera_id FROM trip WHERE id = %s",
+        "SELECT camera_id, started_at FROM trip WHERE id = %s",
         (trip_id,),
     ).fetchone()
     if trip is None or trip[0] != camera_id:
@@ -418,7 +404,7 @@ def buffer_playlist(
 
     rows = connection.execute(
         """
-        SELECT id, file_path, actual_start, actual_end
+        SELECT id, file_path, actual_start, actual_end, status
         FROM segment
         WHERE camera_id = %s
           AND status IN ('temporary', 'preserved')
@@ -427,8 +413,18 @@ def buffer_playlist(
         (camera_id,),
     ).fetchall()
 
+    # Segments preserved for an incident outlive the loop. Listing ones older
+    # than the loop would leave a gap that renumbers every later segment as
+    # the loop rolls forward, so start at the oldest temporary segment.
+    loop_start = min(
+        (row[2] for row in rows if row[4] == "temporary"),
+        default=None,
+    )
+
     segments: list[tuple[UUID, datetime, datetime]] = []
-    for segment_id, file_path, actual_start, actual_end in rows:
+    for segment_id, file_path, actual_start, actual_end, _status in rows:
+        if loop_start is not None and actual_start < loop_start:
+            continue
         path = _safe_media_path(file_path, settings)
         if not path.is_file() or path.stat().st_size == 0:
             continue
@@ -446,13 +442,41 @@ def buffer_playlist(
     # No #EXT-X-PLAYLIST-TYPE tag: this is a fresh snapshot of the current
     # loop buffer on every request, not an append-only EVENT playlist —
     # retention removes the oldest segments as the loop rolls forward.
+    # Players match segments across reloads by sequence number, so number
+    # each one by its start time: it keeps its number as older ones drop off.
+    # Count from a day before the oldest footage the loop could hold when this
+    # trip began, not from 1970: hls.js keeps per-discontinuity state in
+    # arrays indexed by that number, and a huge one makes every segment take
+    # seconds to load. The spare day keeps the first number above zero even
+    # when retention runs late.
+    numbering_origin = _utc(trip[1]).timestamp() - (
+        settings.buffer_seconds + settings.playback_url_seconds + 86_400
+    )
+    first_number = (
+        max(
+            0,
+            math.floor(
+                (segments[0][1].timestamp() - numbering_origin)
+                / settings.segment_seconds
+            ),
+        )
+        if segments
+        else 0
+    )
     lines = [
         "#EXTM3U",
         "#EXT-X-VERSION:3",
         f"#EXT-X-TARGETDURATION:{target_duration}",
-        "#EXT-X-MEDIA-SEQUENCE:0",
+        f"#EXT-X-MEDIA-SEQUENCE:{first_number}",
+        # One discontinuity per segment (see below), so the same numbering.
+        f"#EXT-X-DISCONTINUITY-SEQUENCE:{first_number}",
     ]
-    for segment_id, actual_start, actual_end in segments:
+    for index, (segment_id, actual_start, actual_end) in enumerate(segments):
+        # The recorder cuts with -reset_timestamps, so every segment's
+        # timestamps restart near zero. Without a discontinuity, a player that
+        # jumps back places the segment at the wrong time and snaps to live.
+        if index > 0:
+            lines.append("#EXT-X-DISCONTINUITY")
         expires = int(time.time()) + settings.playback_url_seconds
         segment_signature = _signature(
             f"segment|{segment_id}|{camera_id}",

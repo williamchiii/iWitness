@@ -10,14 +10,8 @@ from pathlib import Path
 import subprocess
 from typing import Any, Callable, Literal
 
-try:
-    from . import db
-    from .config import SERVER_ROOT, settings
-except ImportError:
-    # Supports ``python -m incident_processor`` and ``uvicorn main:app`` from
-    # the server directory.
-    import db
-    from config import SERVER_ROOT, settings
+from . import db
+from .config import SERVER_ROOT, settings
 
 
 logger = logging.getLogger(__name__)

@@ -18,12 +18,8 @@ from fastapi.responses import Response
 
 os.environ.setdefault("PLAYBACK_SIGNING_SECRET", "incident-playback-test-secret")
 
-try:
-    from server import incident_playback_routes as routes
-    from server.auth import Principal
-except ModuleNotFoundError:
-    import incident_playback_routes as routes
-    from auth import Principal
+from server import incident_playback_routes as routes
+from server.auth import Principal
 
 
 INCIDENT_ID = UUID("11111111-1111-1111-1111-111111111111")

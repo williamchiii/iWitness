@@ -9,15 +9,9 @@ from pathlib import Path
 import threading
 from typing import Any
 
-try:
-    from . import db
-    from .config import SERVER_ROOT, settings
-    from .incident_processor import IncidentProcessor
-except ImportError:
-    # Supports ``uvicorn main:app`` when launched from the server directory.
-    import db
-    from config import SERVER_ROOT, settings
-    from incident_processor import IncidentProcessor
+from . import db
+from .config import SERVER_ROOT, settings
+from .incident_processor import IncidentProcessor
 
 
 logger = logging.getLogger(__name__)

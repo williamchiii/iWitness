@@ -15,12 +15,8 @@ from uuid import uuid4
 
 os.environ.setdefault("PLAYBACK_SIGNING_SECRET", "incident-worker-test-secret")
 
-try:
-    import server.incident_worker as worker_module
-    from server.incident_worker import IncidentWorker
-except ModuleNotFoundError:
-    import incident_worker as worker_module
-    from incident_worker import IncidentWorker
+import server.incident_worker as worker_module
+from server.incident_worker import IncidentWorker
 
 
 UTC = timezone.utc

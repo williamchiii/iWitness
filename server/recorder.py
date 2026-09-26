@@ -13,13 +13,8 @@ from pathlib import Path
 import subprocess
 import time
 
-try:
-    from .config import settings
-    from .schemas import SourceType
-except ImportError:
-    # Supports ``uvicorn main:app`` when launched from the server directory.
-    from config import settings
-    from schemas import SourceType
+from .config import settings
+from .schemas import SourceType
 
 
 @dataclass(frozen=True)
@@ -152,6 +147,10 @@ class CameraRecorder:
 
         self.output_directory.mkdir(parents=True, exist_ok=True)
         self._run_id = time.time_ns()
+        # FFmpeg only rewrites the segment list when its first segment
+        # closes. Until then the tracker would read the previous run's rows
+        # against this run's start time and date those segments in the future.
+        self.segment_list_path.unlink(missing_ok=True)
 
         try:
             # The log file is opened only to hand FFmpeg a descriptor to

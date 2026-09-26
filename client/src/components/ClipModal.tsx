@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { api } from '../lib/api'
 import type { Incident, Playback } from '../lib/api/types'
-import { cameraNumber, cameras } from '../lib/cameras'
+import { cameraNumber, cameraPlaces } from '../lib/cameras'
 import { downloadFile } from '../lib/download'
 import { formatClock, formatClockRange, formatDay, formatDuration, formatFileStamp } from '../lib/format'
 import ClipPlayer from './ClipPlayer'
@@ -37,7 +37,7 @@ export default function ClipModal({ incident, onClose }: Props) {
   const [error, setError] = useState<string | null>(null)
   const [downloading, setDownloading] = useState(false)
   const [downloadError, setDownloadError] = useState<string | null>(null)
-  const camera = cameras.find((c) => c.id === incident.camera_id)
+  const camera = cameraPlaces.find((c) => c.id === incident.camera_id)
 
   useEffect(() => {
     let current = true

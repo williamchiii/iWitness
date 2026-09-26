@@ -1,5 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
-import { SAMPLE_STREAM_URL } from '../lib/cameras'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Camera } from '../lib/cameras'
 import { api } from '../lib/api'
 import type { Incident, StartTripResponse } from '../lib/api/types'
@@ -16,11 +15,43 @@ interface Props {
   onSaved: (incident: Incident) => void
 }
 
+// A link that stops working sooner than this after it was issued isn't just expired.
+const BUFFER_RETRY_MS = 30_000
+
 export default function CameraModal({ camera, number, signedIn, onSignIn, onClose, onSaved }: Props) {
   // One trip per time this camera is opened; used to gate the buffer and
   // scope the incident button. Started immediately so a press doesn't have
   // to wait on it separately - see IncidentPanel.press().
   const [tripPromise] = useState<Promise<StartTripResponse>>(() => api.startTrip(camera.id))
+
+  // The camera's loop buffer, as a signed playlist link. Links expire, so the
+  // player asks for a new one; one that fails right away means something else is wrong.
+  const [bufferUrl, setBufferUrl] = useState<string | null>(null)
+  const [bufferFailed, setBufferFailed] = useState(false)
+  const [bufferAttempt, setBufferAttempt] = useState(0)
+  const bufferLoadedAt = useRef(0)
+
+  useEffect(() => {
+    let current = true
+    tripPromise
+      .then(({ trip, trip_token }) => api.getBuffer(trip.id, trip_token))
+      .then((buffer) => {
+        if (!current) return
+        bufferLoadedAt.current = Date.now()
+        setBufferUrl(buffer.playlist_url)
+      })
+      .catch(() => {
+        if (current) setBufferFailed(true)
+      })
+    return () => {
+      current = false
+    }
+  }, [tripPromise, bufferAttempt])
+
+  const refreshBuffer = useCallback(() => {
+    if (Date.now() - bufferLoadedAt.current < BUFFER_RETRY_MS) setBufferFailed(true)
+    else setBufferAttempt((n) => n + 1)
+  }, [])
 
   // Resume an incident pressed on this camera before the Google redirect or a reload.
   const [incident, setIncident] = useState<Incident | null>(() => {
@@ -85,7 +116,17 @@ export default function CameraModal({ camera, number, signedIn, onSignIn, onClos
             </svg>
           </button>
         </div>
-        <Player src={SAMPLE_STREAM_URL} labels={['Sample stream']} />
+        {bufferUrl && !bufferFailed ? (
+          <Player
+            src={bufferUrl}
+            labels={camera.source_type === 'replay' ? ['Replayed'] : []}
+            onExpired={refreshBuffer}
+          />
+        ) : (
+          <div className="grid aspect-video place-items-center bg-black text-sm text-white/80">
+            {bufferFailed && 'Video unavailable. Close and reopen the camera to try again.'}
+          </div>
+        )}
         <IncidentPanel
           tripPromise={tripPromise}
           signedIn={signedIn}
