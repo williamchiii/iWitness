@@ -69,6 +69,8 @@ export interface Incident {
   expires_at: IsoTime | null
   video_version: number
   error: string | null
+  // JPEG still from the clip at the press, owner only; null until ready.
+  thumbnail_url: string | null
 }
 
 export interface Playback {

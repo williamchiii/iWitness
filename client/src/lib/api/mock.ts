@@ -148,6 +148,8 @@ export class MockApiClient implements ApiClient {
       expires_at: signedIn ? null : isoPlusSeconds(triggerAt, CLAIM_WINDOW_SECONDS),
       video_version: 1,
       error: null,
+      // The mock has no clip file to take a still from.
+      thumbnail_url: null,
     }
 
     this.incidents.set(incident.id, incident)

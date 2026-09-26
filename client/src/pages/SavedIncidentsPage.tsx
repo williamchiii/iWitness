@@ -4,6 +4,7 @@ import ClipModal from '../components/ClipModal'
 import Header from '../components/Header'
 import MapBackdrop from '../components/MapBackdrop'
 import SignInDialog from '../components/SignInDialog'
+import Thumbnail from '../components/Thumbnail'
 import Toast from '../components/Toast'
 import type { ToastMessage } from '../components/Toast'
 import { api } from '../lib/api'
@@ -54,9 +55,14 @@ function IncidentCard({ incident, onOpen }: { incident: Incident; onOpen: () => 
       disabled={!ready}
       className="glass-card flex w-full flex-col gap-4 rounded-xl border border-white/70 p-3 text-left transition-colors enabled:hover:border-white sm:flex-row sm:gap-5"
     >
-      <div className="grid aspect-video w-full shrink-0 place-items-center self-start rounded-lg bg-white/60 text-ink sm:w-48">
+      {/* A still from the clip at the press, like the camera list's snapshots. */}
+      <Thumbnail
+        src={ready ? (incident.thumbnail_url ?? null) : null}
+        label="Saved clip"
+        className="w-full self-start sm:w-48"
+      >
         {ready ? (
-          <span className="grid size-10 place-items-center rounded-full bg-white shadow-sm">
+          <span className="grid size-10 place-items-center rounded-full bg-white/90 text-ink shadow-sm">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
               <path d="M7 4.5v15a1 1 0 0 0 1.5.86l12.5-7.5a1 1 0 0 0 0-1.72L8.5 3.64A1 1 0 0 0 7 4.5Z" />
             </svg>
@@ -64,7 +70,7 @@ function IncidentCard({ incident, onOpen }: { incident: Incident; onOpen: () => 
         ) : (
           <span className="text-xs text-muted">{STATUS[incident.processing_state]}...</span>
         )}
-      </div>
+      </Thumbnail>
       <div className="flex min-w-0 flex-1 flex-col px-1 py-1 sm:px-0">
         {camera && (
           <p className="text-xs font-medium uppercase tracking-wider text-muted">
