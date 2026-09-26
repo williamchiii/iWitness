@@ -1,0 +1,67 @@
+@import 'tailwindcss';
+
+/* Light theme after bilt.com: white canvas, near-black type, quiet greys. */
+@theme {
+  --font-sans: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
+  --color-ink: #0c0c0c;
+  --color-muted: #6a6a6a;
+  --color-line: #e6e6e6;
+  --color-surface: #f4f4f3;
+  --color-rec: #d92d20;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: #fff;
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  letter-spacing: -0.01em;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Leaflet: grey out OSM tiles so the map stays quiet behind the pins. */
+.leaflet-container {
+  background: var(--color-surface);
+  font-family: var(--font-sans);
+}
+
+.leaflet-tile-pane {
+  filter: grayscale(1) contrast(0.85) brightness(1.06);
+}
+
+.leaflet-bar.leaflet-control {
+  border: 1px solid var(--color-line);
+  box-shadow: none;
+}
+
+.leaflet-tooltip.cam-tooltip {
+  border: 1px solid var(--color-line);
+  border-radius: 6px;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 0.08);
+  color: var(--color-ink);
+  font-size: 13px;
+  padding: 4px 8px;
+}
+
+.cam-pin {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  background: #fff;
+  color: var(--color-ink);
+  border: 1px solid var(--color-line);
+  box-shadow: 0 2px 8px rgb(0 0 0 / 0.1);
+}
+
+.cam-pin-active {
+  background: var(--color-ink);
+  color: #fff;
+  border-color: var(--color-ink);
+}

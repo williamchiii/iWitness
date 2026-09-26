@@ -50,6 +50,8 @@ segments/
 media/
 *.mp4
 *.ts
+# ...but keep TypeScript source (the *.ts rule above is for MPEG-TS segments)
+!client/**/*.ts
 *.m3u8
 
 # Misc
