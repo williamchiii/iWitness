@@ -104,7 +104,7 @@ async def lifespan(_: FastAPI):
                 camera_id=camera_id,
                 directory=recorder.output_directory,
                 server_root=SERVER_ROOT,
-                segment_seconds=settings.segment_seconds,
+                recorder=recorder,
             )
             retention_worker = RetentionWorker(
                 camera_id=camera_id,
