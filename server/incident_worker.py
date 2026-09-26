@@ -9,7 +9,7 @@ from pathlib import Path
 import threading
 from typing import Any
 
-from . import db
+from . import db, media_cleanup
 from .config import SERVER_ROOT, settings
 from .incident_processor import IncidentProcessor
 
@@ -76,7 +76,12 @@ class IncidentWorker:
     def run_once(self) -> int:
         """Process one poll and return the number of incidents submitted."""
 
-        self._expire_abandoned()
+        self._drain_media_cleanup()
+        try:
+            self._expire_abandoned()
+        except Exception:
+            logger.exception("Incident expiry poll failed")
+        self._drain_media_cleanup()
         incidents = self._recording_incidents()
         submitted = 0
         for incident in incidents:
@@ -90,6 +95,16 @@ class IncidentWorker:
             except Exception:
                 logger.exception("Incident worker failed for incident %s", incident.id)
         return submitted
+
+    def _drain_media_cleanup(self) -> None:
+        try:
+            media_cleanup.drain(
+                self.database,
+                server_root=SERVER_ROOT,
+                media_root=settings.cameras_root.parent,
+            )
+        except Exception:
+            logger.exception("Incident media cleanup poll failed")
 
     def _run(self) -> None:
         while not self._stop_event.is_set():
@@ -109,6 +124,8 @@ class IncidentWorker:
                 FROM incident
                 WHERE processing_state = 'recording'
                   AND claim_state <> 'expired'
+                  AND (claim_state <> 'unclaimed'
+                       OR expires_at IS NULL OR expires_at > now())
                 ORDER BY requested_end ASC, id ASC
                 """
             ).fetchall()
@@ -182,78 +199,93 @@ class IncidentWorker:
         with self.database.connect() as connection:
             rows = connection.execute(
                 """
-                SELECT id, storage_path
+                SELECT id
                 FROM incident
                 WHERE claim_state = 'unclaimed' AND expires_at <= now()
-                FOR UPDATE SKIP LOCKED
                 """
             ).fetchall()
-            for incident_id, storage_path in rows:
-                # Lock the segment rows before removing their files. A new
-                # incident cannot acquire a link to one while it is deleted.
-                exclusive = connection.execute(
+        for (incident_id,) in rows:
+            try:
+                self._expire_one(incident_id)
+            except Exception:
+                logger.exception("Incident expiry failed for incident %s", incident_id)
+
+    def _expire_one(self, incident_id: str) -> None:
+        files_to_remove: list[Path] = []
+        with self.database.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT storage_path FROM incident
+                WHERE id = %s AND claim_state = 'unclaimed' AND expires_at <= now()
+                FOR UPDATE SKIP LOCKED
+                """,
+                (incident_id,),
+            ).fetchone()
+            if row is None:
+                return
+            storage_path = row[0]
+            files_to_remove.extend(self._expired_clip_paths(str(incident_id), storage_path))
+            # Lock every linked segment, including shared ones, in a stable
+            # order. Concurrent expiries must serialize before changing links
+            # or recomputing the segment's owner and status.
+            linked = connection.execute(
+                """
+                SELECT s.id, s.file_path, s.camera_id
+                FROM segment AS s
+                JOIN incident_segment AS link ON link.segment_id = s.id
+                WHERE link.incident_id = %s
+                ORDER BY s.id
+                FOR UPDATE OF s
+                """,
+                (incident_id,),
+            ).fetchall()
+            for segment_id, file_path, camera_id in linked:
+                # Recheck after acquiring the row lock. Another expiry may
+                # have removed its link while this transaction was waiting.
+                shared = connection.execute(
                     """
-                    SELECT s.id, s.file_path, s.camera_id
-                    FROM segment AS s
-                    JOIN incident_segment AS link ON link.segment_id = s.id
-                    WHERE link.incident_id = %s
-                      AND NOT EXISTS (
-                          SELECT 1 FROM incident_segment AS other
-                          WHERE other.segment_id = s.id
-                            AND other.incident_id <> %s
-                      )
-                    FOR UPDATE OF s
+                    SELECT 1 FROM incident_segment
+                    WHERE segment_id = %s AND incident_id <> %s
+                    LIMIT 1
                     """,
-                    (incident_id, incident_id),
-                ).fetchall()
-                for segment_id, file_path, camera_id in exclusive:
-                    # The candidate list may have been read before this row
-                    # lock became available. Recheck links now that new ones
-                    # cannot be added until this transaction ends.
-                    shared = connection.execute(
-                        """
-                        SELECT 1 FROM incident_segment
-                        WHERE segment_id = %s AND incident_id <> %s
-                        LIMIT 1
-                        """,
-                        (segment_id, incident_id),
-                    ).fetchone()
-                    if shared is not None:
-                        continue
-                    self._segment_path(str(file_path), str(camera_id)).unlink(
-                        missing_ok=True
-                    )
-                    connection.execute(
-                        """
-                        DELETE FROM segment
-                        WHERE id = %s
-                          AND NOT EXISTS (
-                              SELECT 1 FROM incident_segment
-                              WHERE segment_id = %s AND incident_id <> %s
-                          )
-                        """,
-                        (segment_id, segment_id, incident_id),
-                    )
-                self._remove_expired_clip(str(incident_id), storage_path)
+                    (segment_id, incident_id),
+                ).fetchone()
+                if shared is not None:
+                    continue
+                segment_path = self._segment_path(str(file_path), str(camera_id))
+                deleted = connection.execute(
+                    """
+                    DELETE FROM segment
+                    WHERE id = %s
+                      AND NOT EXISTS (
+                          SELECT 1 FROM incident_segment
+                          WHERE segment_id = %s AND incident_id <> %s
+                      )
+                    RETURNING id
+                    """,
+                    (segment_id, segment_id, incident_id),
+                ).fetchone()
+                if deleted is not None:
+                    files_to_remove.append(segment_path)
+            connection.execute(
+                """
+                UPDATE incident
+                SET claim_state = 'expired', storage_path = NULL
+                WHERE id = %s AND claim_state = 'unclaimed'
+                """,
+                (incident_id,),
+            )
+            removed = connection.execute(
+                """
+                DELETE FROM incident_segment
+                WHERE incident_id = %s
+                RETURNING segment_id
+                """,
+                (incident_id,),
+            ).fetchall()
+            if removed:
                 connection.execute(
                     """
-                    UPDATE incident
-                    SET claim_state = 'expired', storage_path = NULL
-                    WHERE id = %s AND claim_state = 'unclaimed'
-                    """,
-                    (incident_id,),
-                )
-                removed = connection.execute(
-                    """
-                    DELETE FROM incident_segment
-                    WHERE incident_id = %s
-                    RETURNING segment_id
-                    """,
-                    (incident_id,),
-                ).fetchall()
-                if removed:
-                    connection.execute(
-                        """
                     UPDATE segment AS s
                     SET incident_id = (
                             SELECT link.incident_id
@@ -266,9 +298,15 @@ class IncidentWorker:
                             WHERE link.segment_id = s.id
                         ) THEN 'preserved' ELSE 'temporary' END
                     WHERE s.id = ANY(%s)
-                        """,
-                        ([row[0] for row in removed],),
-                    )
+                    """,
+                    ([row[0] for row in removed],),
+                )
+            media_cleanup.enqueue(
+                connection,
+                files_to_remove,
+                server_root=SERVER_ROOT,
+                media_root=settings.cameras_root.parent,
+            )
 
     @staticmethod
     def _segment_path(file_path: str, camera_id: str) -> Path:
@@ -281,7 +319,9 @@ class IncidentWorker:
         return candidate
 
     @staticmethod
-    def _remove_expired_clip(incident_id: str, storage_path: str | None) -> None:
+    def _expired_clip_paths(incident_id: str, storage_path: str | None) -> list[Path]:
+        if not incident_id or Path(incident_id).name != incident_id:
+            raise ValueError(f"Unsafe incident ID: {incident_id}")
         root = (settings.incidents_root / incident_id).resolve()
         candidate = (
             SERVER_ROOT / Path(storage_path)
@@ -290,9 +330,7 @@ class IncidentWorker:
         ).resolve()
         if not candidate.is_relative_to(root):
             raise ValueError(f"Unsafe expired clip path: {storage_path}")
-        candidate.unlink(missing_ok=True)
-        (root / "clip.tmp.mp4").unlink(missing_ok=True)
-        (root / "segments.concat.txt").unlink(missing_ok=True)
+        return [candidate, root / "clip.tmp.mp4", root / "segments.concat.txt"]
 
 
 def _as_utc(value: datetime) -> datetime:
