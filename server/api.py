@@ -25,6 +25,7 @@ try:
         StartTripResponse,
         TripResponse,
     )
+    from .incident_schemas import IncidentResponse
 except ImportError:
     # Supports ``uvicorn main:app`` when launched from the server directory.
     import db
@@ -36,6 +37,7 @@ except ImportError:
         StartTripResponse,
         TripResponse,
     )
+    from incident_schemas import IncidentResponse
 
 
 router = APIRouter()
@@ -59,6 +61,46 @@ def _trip_from_row(row: tuple[object, ...]) -> TripResponse:
         ended_at=_utc(row[3]) if row[3] is not None else None,
         state=str(row[4]),
     )
+
+
+def _incident_from_row(row: tuple[object, ...]) -> IncidentResponse:
+    """Convert the incident query shape into the public response model."""
+
+    return IncidentResponse(
+        id=str(row[0]),
+        trip_id=str(row[1]),
+        camera_id=str(row[2]),
+        camera_name=str(row[3]),
+        source_type=str(row[4]),
+        trigger_at=_utc(row[5]),
+        requested_start=_utc(row[6]),
+        requested_end=_utc(row[7]),
+        actual_start=_utc(row[8]) if row[8] is not None else None,
+        actual_end=_utc(row[9]) if row[9] is not None else None,
+        source_start=_utc(row[10]) if row[10] is not None else None,
+        source_end=_utc(row[11]) if row[11] is not None else None,
+        duration_seconds=row[12],
+        size_bytes=row[13],
+        sha256=row[14],
+        processing_state=str(row[15]),
+        claim_state=str(row[16]),
+        expires_at=_utc(row[17]) if row[17] is not None else None,
+        video_version=row[18],
+        error=row[19],
+    )
+
+
+_INCIDENT_SELECT = """
+    SELECT i.id, i.trip_id, i.camera_id, c.name, c.source_type,
+           i.trigger_at, i.requested_start, i.requested_end,
+           i.actual_start, i.actual_end, i.source_start, i.source_end,
+           i.duration_seconds, i.size_bytes, i.sha256,
+           i.processing_state, i.claim_state, i.expires_at,
+           i.video_version, i.error
+    FROM incident AS i
+    JOIN camera AS c ON c.id = i.camera_id
+    WHERE i.id = %s
+"""
 
 
 def _load_trip(trip_id: UUID, trip_token: str) -> TripResponse:
@@ -228,6 +270,83 @@ def get_buffer(
         earliest=earliest,
         latest=latest,
     )
+
+
+@router.post(
+    "/trips/{trip_id}/incidents",
+    response_model=IncidentResponse,
+    status_code=201,
+)
+def create_incident(
+    trip_id: UUID,
+    x_trip_token: str | None = Header(default=None, alias="X-Trip-Token"),
+) -> IncidentResponse:
+    """Create an unclaimed incident and preserve its pre-trigger segments."""
+
+    if not x_trip_token:
+        raise HTTPException(status_code=403, detail="Trip token required")
+
+    trip = _load_trip(trip_id, x_trip_token)
+    with db.connect() as connection:
+        incident_id = connection.execute(
+            """
+            INSERT INTO incident (
+                trip_id,
+                camera_id,
+                trigger_at,
+                requested_start,
+                requested_end,
+                processing_state,
+                claim_state,
+                expires_at
+            )
+            VALUES (
+                %s,
+                %s,
+                now(),
+                now() - (%s * interval '1 second'),
+                now() + (%s * interval '1 second'),
+                'recording',
+                'unclaimed',
+                now() + (%s * interval '1 second')
+            )
+            RETURNING id
+            """,
+            (
+                trip_id,
+                trip.camera_id,
+                settings.pre_trigger_seconds,
+                settings.post_trigger_seconds,
+                settings.unclaimed_incident_seconds,
+            ),
+        ).fetchone()[0]
+
+        # Preserve only temporary rows. A segment already assigned to an
+        # earlier incident must remain owned by that incident because the
+        # schema stores one incident_id per segment.
+        connection.execute(
+            """
+            UPDATE segment AS s
+            SET status = 'preserved', incident_id = %s
+            WHERE s.camera_id = %s
+              AND s.status = 'temporary'
+              AND s.actual_start < (
+                  SELECT trigger_at FROM incident WHERE id = %s
+              )
+              AND s.actual_end > (
+                  SELECT requested_start FROM incident WHERE id = %s
+              )
+            """,
+            (incident_id, trip.camera_id, incident_id, incident_id),
+        )
+
+        row = connection.execute(_INCIDENT_SELECT, (incident_id,)).fetchone()
+
+    if row is None:
+        # The insert succeeded, so reaching this branch indicates a database
+        # inconsistency rather than a client error.
+        raise HTTPException(status_code=500, detail="Incident could not be loaded")
+    return _incident_from_row(row)
 
 
 @router.get(
