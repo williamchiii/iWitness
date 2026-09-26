@@ -28,8 +28,9 @@ export default function CameraCard({ camera, number, active, onHover, onSelect }
         <p className="mt-1 text-lg font-medium tracking-tight">{camera.name}</p>
         <p className="text-sm text-muted">{camera.direction}</p>
         <p className="mt-auto flex items-center gap-2 text-xs text-muted">
-          <span className="size-1.5 rounded-full bg-rec" />
-          Recording
+          <span className={`size-1.5 rounded-full ${camera.recording ? 'bg-rec' : 'bg-ink/25'}`} />
+          {camera.recording ? 'Recording' : 'Not recording'}
+          {camera.source_type === 'replay' && ' · Replayed'}
         </p>
       </div>
     </button>

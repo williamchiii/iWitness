@@ -29,13 +29,20 @@ function Label({ children }: { children: ReactNode }) {
 interface Props {
   src: string
   labels: string[]
+  // The signed playlist link ran out (401/403): the owner fetches a fresh `src`.
+  onExpired?: () => void
 }
 
 // One YouTube-style timeline over the camera's loop buffer: drag back to watch
 // earlier footage, press Live to jump back to now.
-export default function Player({ src, labels }: Props) {
+export default function Player({ src, labels, onExpired }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const hlsRef = useRef<Hls | null>(null)
+  // Read from a ref so a new callback doesn't tear down the stream.
+  const onExpiredRef = useRef(onExpired)
+  useEffect(() => {
+    onExpiredRef.current = onExpired
+  })
   const [timeline, setTimeline] = useState<Timeline | null>(null)
   const [paused, setPaused] = useState(false)
   const [failed, setFailed] = useState(false)
@@ -45,8 +52,17 @@ export default function Player({ src, labels }: Props) {
     if (Hls.isSupported()) {
       const hls = new Hls()
       hlsRef.current = hls
+      // hls.js doesn't retry a 4xx, and for a live playlist it may just stop
+      // reloading without a fatal error, so catch the first 401/403 of any kind.
+      let expired = false
       hls.on(Hls.Events.ERROR, (_event, data) => {
-        if (data.fatal) setFailed(true)
+        const status = data.response?.code
+        if ((status === 401 || status === 403) && onExpiredRef.current) {
+          if (!expired) onExpiredRef.current()
+          expired = true
+        } else if (data.fatal) {
+          setFailed(true)
+        }
       })
       hls.loadSource(src)
       hls.attachMedia(video)

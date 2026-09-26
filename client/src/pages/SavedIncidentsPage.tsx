@@ -9,7 +9,7 @@ import type { ToastMessage } from '../components/Toast'
 import { api } from '../lib/api'
 import type { Incident } from '../lib/api/types'
 import { signInWithGoogle, signOut } from '../lib/auth'
-import { cameraNumber, cameras } from '../lib/cameras'
+import { cameraNumber, cameraPlaces } from '../lib/cameras'
 import { formatClock, formatClockRange, formatDay, formatDuration } from '../lib/format'
 import { OUTLINE_PILL } from '../lib/styles'
 import { useUser } from '../lib/useUser'
@@ -45,7 +45,7 @@ function Tag({ children }: { children: string }) {
 }
 
 function IncidentCard({ incident, onOpen }: { incident: Incident; onOpen: () => void }) {
-  const camera = cameras.find((c) => c.id === incident.camera_id)
+  const camera = cameraPlaces.find((c) => c.id === incident.camera_id)
   const ready = incident.processing_state === 'ready'
   return (
     <button

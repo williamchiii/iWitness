@@ -1,8 +1,8 @@
 import L from 'leaflet'
 import type { LatLngBounds } from 'leaflet'
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useRef } from 'react'
 import { MapContainer, Marker, TileLayer, Tooltip, ZoomControl, useMap } from 'react-leaflet'
-import { cameraNumber } from '../lib/cameras'
+import { cameraNumber, cameraPlaces } from '../lib/cameras'
 import type { Camera } from '../lib/cameras'
 import { CAMERA_SVG } from '../lib/icons'
 
@@ -17,6 +17,8 @@ function pin(active: boolean) {
 
 const PIN = pin(false)
 const PIN_ACTIVE = pin(true)
+// Frame every known camera place, so the view holds still while the list loads.
+const BOUNDS = L.latLngBounds(cameraPlaces.map((c) => [c.lat, c.lng]))
 const PADDING = 64
 // Street level: the cameras are only about a kilometre apart.
 const FOCUS_ZOOM = 16
@@ -66,10 +68,8 @@ interface Props {
 }
 
 export default function CameraMap({ cameras, activeId, matchIds, selected, onHover, onSelect }: Props) {
-  const bounds = useMemo(() => L.latLngBounds(cameras.map((c) => [c.lat, c.lng])), [cameras])
-
   return (
-    <MapContainer bounds={bounds} boundsOptions={fitOptions()} zoomControl={false} className="size-full">
+    <MapContainer bounds={BOUNDS} boundsOptions={fitOptions()} zoomControl={false} className="size-full">
       <TileLayer
         url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
         maxZoom={19}
@@ -94,7 +94,7 @@ export default function CameraMap({ cameras, activeId, matchIds, selected, onHov
           </Tooltip>
         </Marker>
       ))}
-      <Focus camera={selected} bounds={bounds} />
+      <Focus camera={selected} bounds={BOUNDS} />
     </MapContainer>
   )
 }
