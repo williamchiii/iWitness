@@ -50,3 +50,5 @@ jobs:
       - run: pip install -e .. --no-deps
       - run: ruff check .
       - run: python -c "import server.main"
+      - run: python -m unittest discover -s server/tests
+        working-directory: .
