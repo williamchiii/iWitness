@@ -236,7 +236,7 @@ def delete_incident(
     with db.connect() as connection:
         row = connection.execute(
             """
-            SELECT storage_path
+            SELECT storage_path, processing_state
             FROM incident
             WHERE id = %s AND user_id = %s
             FOR UPDATE
@@ -245,6 +245,8 @@ def delete_incident(
         ).fetchone()
         if row is None:
             raise HTTPException(status_code=404, detail="Incident not found")
+        if row[1] == "assembling":
+            raise HTTPException(status_code=409, detail="Incident clip is being assembled")
 
         clip_path = _safe_clip_path(incident_id, row[0], require_file=False)
         if clip_path is not None and clip_path.exists():

@@ -167,7 +167,7 @@ class IncidentPlaybackRouteTests(unittest.TestCase):
             incident_directory.mkdir(parents=True)
             clip = incident_directory / "clip.mp4"
             clip.write_bytes(b"private clip")
-            database = _Database((str(clip),))
+            database = _Database((str(clip), "ready"))
             runtime = SimpleNamespace(incidents_root=root / "media" / "incidents")
             with (
                 patch.object(routes, "db", database),
@@ -192,6 +192,19 @@ class IncidentPlaybackRouteTests(unittest.TestCase):
             with self.assertRaises(HTTPException) as raised:
                 routes.delete_incident(INCIDENT_ID, _principal())
         self.assertEqual(raised.exception.status_code, 404)
+
+    def test_delete_rejects_clip_while_assembling(self) -> None:
+        database = _Database((None, "assembling"))
+        with patch.object(routes, "db", database):
+            with self.assertRaises(HTTPException) as raised:
+                routes.delete_incident(INCIDENT_ID, _principal())
+        self.assertEqual(raised.exception.status_code, 409)
+        self.assertFalse(
+            any(
+                statement.startswith("delete from incident")
+                for statement in database.connection.statements
+            )
+        )
 
 
 if __name__ == "__main__":
