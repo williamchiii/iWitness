@@ -1,0 +1,57 @@
+# Claude
+claude.local.md
+.claude/settings.local.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+logs/
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+dist/
+build/
+.next/
+.turbo/
+coverage/
+
+# Python / FastAPI
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+instance/
+
+# Recorded video / local media (FFmpeg segments, rolling buffer, clips)
+recordings/
+segments/
+media/
+*.mp4
+*.ts
+*.m3u8
+
+# Misc
+*.tmp
+*.bak
