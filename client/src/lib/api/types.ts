@@ -71,6 +71,8 @@ export interface Incident {
   error: string | null
   // JPEG still from the clip at the press, owner only; null until ready.
   thumbnail_url: string | null
+  // When the server deletes this saved clip (30 days after the press); null unless claimed.
+  deletes_at: IsoTime | null
 }
 
 export interface Playback {

@@ -67,7 +67,7 @@ CI (`.github/workflows/ci.yml`, GitHub Actions) runs on pull requests and manual
 - **No sign-in needed** to open the app, start a trip, watch the live camera, scrub back through the loop buffer, or have it record.
 - **Sign-in is required only to save**: pressing **I was in an incident** when signed out must not lose footage. Record the trigger time at the press, mark the earlier segments preserved and start post-trigger recording right away, *then* prompt Google sign-in.
 - Anonymous trips get an unguessable server-issued trip token held by that browser. After sign-in, the backend attaches the pending incident to the verified user only if the request carries that token plus a valid auth token. The first claim wins; a claimed incident cannot be claimed again.
-- Unclaimed pending incidents expire (for example 15 minutes after the press) and their preserved video is deleted. Loop buffers belong to cameras, not trips, so ending a trip deletes nothing; the loop keeps rolling.
+- Unclaimed pending incidents expire (for example 15 minutes after the press) and their preserved video is deleted. Saved clips are deleted automatically 30 days after the press (`SAVED_CLIP_SECONDS`); each incident's `deletes_at` says when, and the Library shows the time left. Loop buffers belong to cameras, not trips, so ending a trip deletes nothing; the loop keeps rolling.
 - **Saved Incidents is always private**: listing, playback, and download of saved clips require sign-in and ownership. "View without signing in" means the live trip stream only, never another user's saved clips.
 
 ## Loop buffer: 5 hours, dashcam style

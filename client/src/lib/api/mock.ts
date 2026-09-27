@@ -14,6 +14,8 @@ import type { BufferInfo, Camera, Incident, Playback, StartTripResponse, Trip, U
 export const CLIP_BEFORE_SECONDS = 60
 export const CLIP_AFTER_SECONDS = 15
 const CLAIM_WINDOW_SECONDS = 15 * 60
+// Saved clips are deleted this long after the press, like the server's SAVED_CLIP_SECONDS.
+const SAVED_CLIP_SECONDS = 30 * 24 * 60 * 60
 // After the post-trigger window closes, how long "assembling" takes before the clip is ready.
 const ASSEMBLE_SECONDS = 3
 // About the recorder's 1 Mbps, for a plausible file size.
@@ -150,6 +152,7 @@ export class MockApiClient implements ApiClient {
       error: null,
       // The mock has no clip file to take a still from.
       thumbnail_url: null,
+      deletes_at: signedIn ? isoPlusSeconds(triggerAt, SAVED_CLIP_SECONDS) : null,
     }
 
     this.incidents.set(incident.id, incident)
@@ -182,7 +185,12 @@ export class MockApiClient implements ApiClient {
       throw new ApiError(403, 'Invalid trip token')
     }
 
-    const claimed: Incident = { ...incident, claim_state: 'claimed', expires_at: null }
+    const claimed: Incident = {
+      ...incident,
+      claim_state: 'claimed',
+      expires_at: null,
+      deletes_at: isoPlusSeconds(incident.trigger_at, SAVED_CLIP_SECONDS),
+    }
     this.incidents.set(incidentId, claimed)
     this.persist()
     return this.advance(claimed)
@@ -191,6 +199,7 @@ export class MockApiClient implements ApiClient {
   async listIncidents(signedIn: boolean): Promise<Incident[]> {
     await delay()
     this.requireSignedIn(signedIn)
+    this.dropDeletedClips()
     return [...this.incidents.values()]
       .map((incident) => this.advance(incident))
       .filter((incident) => incident.claim_state === 'claimed')
@@ -242,9 +251,24 @@ export class MockApiClient implements ApiClient {
   }
 
   private requireIncident(incidentId: string): Incident {
+    this.dropDeletedClips()
     const incident = this.incidents.get(incidentId)
     if (!incident) throw new ApiError(404, 'Incident not found')
     return this.advance(incident)
+  }
+
+  // The server deletes saved clips at deletes_at; so does the mock.
+  private dropDeletedClips(): void {
+    const now = Date.now()
+    let dropped = false
+    for (const [id, incident] of this.incidents) {
+      if (incident.deletes_at && now >= Date.parse(incident.deletes_at)) {
+        this.incidents.delete(id)
+        this.incidentTripTokens.delete(id)
+        dropped = true
+      }
+    }
+    if (dropped) this.persist()
   }
 
   // Processing moves recording -> assembling -> ready on a short timer, as the
@@ -281,7 +305,13 @@ export class MockApiClient implements ApiClient {
       const raw = localStorage.getItem(STORAGE_KEY)
       if (!raw) return
       const stored = JSON.parse(raw) as StoredIncidents
-      for (const incident of stored.incidents) this.incidents.set(incident.id, incident)
+      for (const incident of stored.incidents) {
+        // Saved before deletes_at existed: give it one, as the server would.
+        const deletesAt =
+          incident.deletes_at ??
+          (incident.claim_state === 'claimed' ? isoPlusSeconds(incident.trigger_at, SAVED_CLIP_SECONDS) : null)
+        this.incidents.set(incident.id, { ...incident, deletes_at: deletesAt })
+      }
       for (const [id, token] of stored.tripTokens) this.incidentTripTokens.set(id, token)
     } catch {
       // Unreadable or blocked storage: start empty, like a fresh backend.

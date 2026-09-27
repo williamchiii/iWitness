@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from . import db
 from .auth import Principal, get_current_principal
 from .incident_playback_routes import signed_thumbnail_url
-from .incident_schemas import IncidentResponse
+from .incident_schemas import IncidentResponse, saved_clip_deletes_at
 
 
 router = APIRouter()
@@ -54,6 +54,7 @@ def _incident_from_row(row: tuple[object, ...]) -> IncidentResponse:
         expires_at=_as_utc(row[17]) if row[17] is not None else None,
         video_version=row[18],
         error=row[19],
+        deletes_at=saved_clip_deletes_at(str(row[16]), _as_utc(row[5])),
     )
 
 

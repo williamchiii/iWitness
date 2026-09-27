@@ -27,7 +27,7 @@ from .schemas import (
     StartTripResponse,
     TripResponse,
 )
-from .incident_schemas import IncidentResponse
+from .incident_schemas import IncidentResponse, saved_clip_deletes_at
 from .segment_preservation import preserve_segments
 
 
@@ -78,6 +78,7 @@ def _incident_from_row(row: tuple[object, ...]) -> IncidentResponse:
         expires_at=_utc(row[17]) if row[17] is not None else None,
         video_version=row[18],
         error=row[19],
+        deletes_at=saved_clip_deletes_at(str(row[16]), _utc(row[5])),
     )
 
 

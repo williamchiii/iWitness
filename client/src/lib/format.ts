@@ -32,6 +32,17 @@ export function formatClockRange(startMs: number, endMs: number) {
   return shared && shared === end.match(suffix)?.[0] ? `${start.slice(0, -shared.length)} to ${end}` : `${start} to ${end}`
 }
 
+// How long until a time, rounded for reading at a glance: "30 days", "47 hours",
+// "12 minutes". Days from 2 days up, hours from 1 hour, minutes below that.
+export function formatTimeLeft(ms: number) {
+  const plural = (n: number, unit: string) => `${n} ${unit}${n === 1 ? '' : 's'}`
+  const minutes = Math.max(1, Math.ceil(ms / 60_000))
+  if (minutes < 60) return plural(minutes, 'minute')
+  const hours = Math.round(ms / 3_600_000)
+  if (hours < 48) return plural(hours, 'hour')
+  return plural(Math.round(ms / 86_400_000), 'day')
+}
+
 // 60 -> "1 minute", 120 -> "2 minutes", 15 -> "15 seconds".
 export function formatSpan(seconds: number) {
   if (seconds % 60 === 0) {

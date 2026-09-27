@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 import hashlib
 import hmac
@@ -20,9 +21,11 @@ os.environ.setdefault("PLAYBACK_SIGNING_SECRET", "incident-lifecycle-test-secret
 try:
     from server.auth import Principal
     from server import incident_lifecycle_routes as lifecycle_routes
+    from server import incident_schemas
 except ModuleNotFoundError:
     from auth import Principal
     import incident_lifecycle_routes as lifecycle_routes
+    import incident_schemas
 
 claim_incident = lifecycle_routes.claim_incident
 get_incident = lifecycle_routes.get_incident
@@ -223,6 +226,8 @@ class IncidentLifecycleRouteTests(TestCase):
         self.assertEqual(response.id, str(INCIDENT_ID))
         self.assertEqual(response.claim_state, "claimed")
         self.assertIsNone(response.expires_at)
+        # Saved now, so it gets its automatic deletion time, 30 days after the press.
+        self.assertEqual(response.deletes_at, response.trigger_at + timedelta(days=30))
         self.assertEqual(connection.queries[2][1], (USER_ID, INCIDENT_ID))
         self.assertIn("expires_at > clock_timestamp()", connection.queries[2][0])
 
@@ -341,6 +346,18 @@ class IncidentLifecycleRouteTests(TestCase):
         self.assertEqual(len(response), 2)
         self.assertEqual(connection.queries[0][1], (USER_ID,))
         self.assertIn("ORDER BY i.trigger_at DESC", connection.queries[0][0])
+        self.assertEqual(response[0].deletes_at, response[0].trigger_at + timedelta(days=30))
+
+    def test_only_saved_clips_have_a_deletion_time_and_it_follows_the_setting(self) -> None:
+        pressed = datetime(2026, 9, 26, 22, 0, tzinfo=timezone.utc)
+        deletes_at = incident_schemas.saved_clip_deletes_at
+
+        self.assertEqual(deletes_at("claimed", pressed), pressed + timedelta(days=30))
+        self.assertIsNone(deletes_at("unclaimed", pressed))
+        self.assertIsNone(deletes_at("expired", pressed))
+        short = replace(incident_schemas.settings, saved_clip_seconds=600)
+        with patch.object(incident_schemas, "settings", short):
+            self.assertEqual(deletes_at("claimed", pressed), pressed + timedelta(minutes=10))
 
     def test_detail_returns_404_when_incident_is_not_owned(self) -> None:
         connection = _Connection([_Result(None)])

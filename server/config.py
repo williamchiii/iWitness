@@ -52,6 +52,7 @@ class Settings:
     pre_trigger_seconds: int
     post_trigger_seconds: int
     unclaimed_incident_seconds: int
+    saved_clip_seconds: int
 
     @classmethod
     def from_environment(cls) -> "Settings":
@@ -73,6 +74,8 @@ class Settings:
             unclaimed_incident_seconds=_positive_int(
                 "UNCLAIMED_INCIDENT_SECONDS", 900
             ),
+            # Saved clips are deleted automatically this long after the press.
+            saved_clip_seconds=_positive_int("SAVED_CLIP_SECONDS", 30 * 24 * 3600),
         )
 
     @property

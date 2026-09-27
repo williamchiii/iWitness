@@ -14,12 +14,16 @@ import type { Incident } from '../lib/api/types'
 import { signInWithGoogle, signOut } from '../lib/auth'
 import { cameraNumber, cameraPlaces } from '../lib/cameras'
 import { downloadClip } from '../lib/clips'
-import { formatClock, formatClockRange, formatDay, formatDuration } from '../lib/format'
+import { formatClock, formatClockRange, formatDay, formatDuration, formatTimeLeft } from '../lib/format'
 import { OUTLINE_PILL } from '../lib/styles'
+import { useNow } from '../lib/useNow'
 import { useUser } from '../lib/useUser'
 
 // docs/api_contract.md: poll GET /incidents/{id} every 2 to 3 s until ready or failed.
 const POLL_MS = 2500
+// The time left on each clip is shown in minutes at the finest.
+const CLOCK_MS = 60_000
+const DAY_MS = 24 * 60 * 60 * 1000
 
 const isDone = (incident: Incident) => incident.processing_state === 'ready' || incident.processing_state === 'failed'
 
@@ -44,8 +48,18 @@ const STATUS: Record<Incident['processing_state'], string> = {
   failed: 'Failed',
 }
 
-function Tag({ children }: { children: string }) {
-  return <span className="rounded-md bg-surface px-2 py-1 text-xs font-medium text-muted">{children}</span>
+function Tag({ children, urgent = false }: { children: string; urgent?: boolean }) {
+  return (
+    <span className={`rounded-md px-2 py-1 text-xs font-medium ${urgent ? 'bg-rec/10 text-rec' : 'bg-surface text-muted'}`}>
+      {children}
+    </span>
+  )
+}
+
+// How long until the server deletes a saved clip, from its deletes_at.
+function DeletesTag({ deletesAt, now }: { deletesAt: string; now: number }) {
+  const left = Date.parse(deletesAt) - now
+  return <Tag urgent={left < DAY_MS}>{left > 0 ? `Deletes in ${formatTimeLeft(left)}` : 'Deleting soon'}</Tag>
 }
 
 // Outlined button for a card's Download and Delete.
@@ -54,10 +68,12 @@ const CARD_ACTION =
 
 function IncidentCard({
   incident,
+  now,
   onOpen,
   onDeleted,
 }: {
   incident: Incident
+  now: number
   onOpen: () => void
   onDeleted: (incident: Incident) => void
 }) {
@@ -126,6 +142,7 @@ function IncidentCard({
           <Tag>{STATUS[incident.processing_state]}</Tag>
           <Tag>{incident.source_type === 'replay' ? 'Replayed recording' : 'Live camera'}</Tag>
           {incident.duration_seconds !== null && <Tag>{formatDuration(incident.duration_seconds)}</Tag>}
+          {incident.deletes_at && <DeletesTag deletesAt={incident.deletes_at} now={now} />}
         </div>
         {downloadError && <p className="mt-2 text-sm text-rec">{downloadError}</p>}
       </div>
@@ -165,6 +182,7 @@ function SavedList({ onDeleted }: { onDeleted: (incident: Incident) => void }) {
   const [error, setError] = useState<string | null>(null)
   const [attempt, setAttempt] = useState(0)
   const [openId, setOpenId] = useState<string | null>(null)
+  const now = useNow(CLOCK_MS)
   const closeClip = useCallback(() => setOpenId(null), [])
   const removeClip = useCallback(
     (deleted: Incident) => {
@@ -234,7 +252,12 @@ function SavedList({ onDeleted }: { onDeleted: (incident: Incident) => void }) {
       <ul className="mt-8 space-y-3">
         {incidents.map((incident) => (
           <li key={incident.id}>
-            <IncidentCard incident={incident} onOpen={() => setOpenId(incident.id)} onDeleted={removeClip} />
+            <IncidentCard
+              incident={incident}
+              now={now}
+              onOpen={() => setOpenId(incident.id)}
+              onDeleted={removeClip}
+            />
           </li>
         ))}
       </ul>
