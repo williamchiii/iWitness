@@ -111,6 +111,8 @@ interface Incident {
   error: string | null
   thumbnail_url: string | null   // JPEG still from the clip at the press; short-lived
                                  // signed link, owner only. Null until ready.
+  deletes_at: IsoTime | null     // when a saved clip is deleted automatically:
+                                 // trigger_at + 30 days. Null unless claimed.
 }
 
 interface Playback {
@@ -167,6 +169,7 @@ All require `Authorization`. Missing or invalid token returns 401.
 - **List:** metadata only. The list page must not request playback for every row. It may load each row's `thumbnail_url`: a small image, not the clip. The link is relative to the API origin, signed, and valid for 5 to 10 minutes; load it as-is.
 - **Poll** `GET /incidents/{id}` every 2 to 3 seconds while `processing_state` is not `ready` or `failed`. No websockets for now.
 - **Delete** removes the stored clip and the incident row. Only the owner can delete; anyone else gets 404. Client clears that incident's cached playback URL.
+- **Automatic deletion:** a saved clip is deleted by the server at `deletes_at`, 30 days after the press (a server setting, `SAVED_CLIP_SECONDS`). It then drops out of the list, and `GET /incidents/{id}` returns 404. The client shows the time left from `deletes_at` and never assumes the period.
 - **Playback** returns 409 until `processing_state` is `ready`. Cache the result per (user id, incident id, `video_version`) until shortly before `expires_at`; clear that cache on sign-out and account switch.
 
 ## The incident flow, signed out
