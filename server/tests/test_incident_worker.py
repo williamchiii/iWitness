@@ -20,6 +20,15 @@ from server.incident_worker import IncidentWorker
 
 
 UTC = timezone.utc
+SAVED_CLIP_SECONDS = 30 * 24 * 3600
+
+
+def _settings(root: Path) -> SimpleNamespace:
+    return SimpleNamespace(
+        cameras_root=root / "media" / "cameras",
+        incidents_root=root / "media" / "incidents",
+        saved_clip_seconds=SAVED_CLIP_SECONDS,
+    )
 
 
 @contextmanager
@@ -56,10 +65,14 @@ class _FakeDatabase:
         newly_shared: list[str] | None = None,
         fail_commit_for: str | None = None,
         delete_segment_returns: bool = True,
+        saved: list[tuple[Any, ...]] | None = None,
     ) -> None:
         self.incidents = incidents
         self.latest_by_incident = latest_by_incident
         self.expired = expired or []
+        # Saved clips past their retention period: (id, storage_path).
+        self.saved = saved or []
+        self.saved_query: tuple[str, tuple[Any, ...]] | None = None
         self.exclusive = exclusive or []
         self.shared = shared or []
         self.newly_shared = newly_shared or []
@@ -100,6 +113,15 @@ class _FakeDatabase:
             return _Result()
         if normalized.startswith("delete from pending_media_delete"):
             self.pending_paths.remove(params[0])
+            return _Result()
+        if normalized.startswith("select i.id from incident"):
+            self.saved_query = (normalized, params)
+            return _Result(rows=[(row[0],) for row in self.saved])
+        if normalized.startswith("select i.storage_path from incident"):
+            self._locked_incident = str(params[0])
+            return _Result(row=next(((row[1],) for row in self.saved if row[0] == params[0]), None))
+        if normalized.startswith("delete from incident "):
+            self.expiry_calls.append("delete incident")
             return _Result()
         if normalized.startswith("select id from incident"):
             self.expiry_query = normalized
@@ -244,7 +266,7 @@ class IncidentWorkerTests(unittest.TestCase):
                 exclusive=[("segment-exclusive", "media/cameras/camera-demo/exclusive.ts", "camera-demo")],
                 shared=["segment-shared"],
             )
-            settings = SimpleNamespace(cameras_root=root / "media" / "cameras", incidents_root=root / "media" / "incidents")
+            settings = _settings(root)
             with patch.object(worker_module, "SERVER_ROOT", root), patch.object(worker_module, "settings", settings):
                 submitted = IncidentWorker(database=database, processor=_Processor()).run_once()
 
@@ -257,6 +279,80 @@ class IncidentWorkerTests(unittest.TestCase):
             self.assertEqual(database.expiry_calls, ["select exclusive", "recheck", "delete segment", "expire", "unlink"])
             self.assertEqual(database.preserve_calls, [(["segment-shared"],)])
 
+    def test_saved_clip_is_deleted_after_its_retention_period(self) -> None:
+        with _workspace_directory() as root:
+            camera = root / "media" / "cameras" / "camera-demo"
+            incident = root / "media" / "incidents" / "incident-saved"
+            camera.mkdir(parents=True)
+            incident.mkdir(parents=True)
+            exclusive_file = camera / "exclusive.ts"
+            shared_file = camera / "shared.ts"
+            clip = incident / "clip.mp4"
+            thumbnail = incident / "thumbnail.jpg"
+            for path in (exclusive_file, shared_file, clip, thumbnail):
+                path.write_bytes(b"video")
+            database = _FakeDatabase(
+                [], {}, saved=[("incident-saved", "media/incidents/incident-saved/clip.mp4")],
+                exclusive=[("segment-exclusive", "media/cameras/camera-demo/exclusive.ts", "camera-demo")],
+                shared=["segment-shared"],
+            )
+            with patch.object(worker_module, "SERVER_ROOT", root), patch.object(worker_module, "settings", _settings(root)):
+                IncidentWorker(database=database, processor=_Processor()).run_once()
+
+            query, params = database.saved_query
+            self.assertIn("i.claim_state = 'claimed'", query)
+            self.assertIn("i.processing_state <> 'assembling'", query)
+            self.assertIn("i.trigger_at <= now() - (%s * interval '1 second')", query)
+            self.assertEqual(params, (SAVED_CLIP_SECONDS,))
+            self.assertFalse(clip.exists())
+            self.assertFalse(thumbnail.exists())
+            self.assertFalse(exclusive_file.exists())
+            self.assertTrue(shared_file.exists())
+            # Links are released before the row goes, so no preserved
+            # segment is left pointing at a deleted incident.
+            self.assertEqual(
+                database.expiry_calls,
+                ["select exclusive", "recheck", "delete segment", "unlink", "delete incident"],
+            )
+            self.assertEqual(database.preserve_calls, [(["segment-shared"],)])
+            self.assertEqual(database.pending_paths, [])
+
+    def test_saved_clip_already_gone_under_the_lock_is_left_alone(self) -> None:
+        # Listed as past its period, but the owner deleted it before the lock.
+        class OwnerDeletedDatabase(_FakeDatabase):
+            def execute(self, query: str, params: tuple[Any, ...] = ()) -> _Result:
+                if " ".join(query.split()).lower().startswith("select i.storage_path from incident"):
+                    return _Result(row=None)
+                return super().execute(query, params)
+
+        with _workspace_directory() as root:
+            database = OwnerDeletedDatabase([], {}, saved=[("incident-saved", None)])
+            with patch.object(worker_module, "SERVER_ROOT", root), patch.object(worker_module, "settings", _settings(root)):
+                IncidentWorker(database=database, processor=_Processor()).run_once()
+
+        self.assertEqual(database.expiry_calls, [])
+
+    def test_one_bad_saved_clip_does_not_stop_the_next(self) -> None:
+        with _workspace_directory() as root:
+            incident = root / "media" / "incidents" / "incident-good"
+            incident.mkdir(parents=True)
+            clip = incident / "clip.mp4"
+            clip.write_bytes(b"video")
+            database = _FakeDatabase(
+                [], {}, saved=[
+                    ("incident-bad", "../../outside.mp4"),
+                    ("incident-good", "media/incidents/incident-good/clip.mp4"),
+                ],
+            )
+            with patch.object(worker_module, "SERVER_ROOT", root), patch.object(worker_module, "settings", _settings(root)):
+                with self.assertLogs(level="ERROR") as logs:
+                    IncidentWorker(database=database, processor=_Processor()).run_once()
+
+            self.assertIn("incident-bad", "\n".join(logs.output))
+            self.assertFalse(clip.exists())
+            # Only the good clip got as far as its segments and row.
+            self.assertEqual(database.expiry_calls, ["select exclusive", "unlink", "delete incident"])
+
     def test_expiry_rejects_segment_path_outside_camera(self) -> None:
         with _workspace_directory() as root:
             unrelated = root / "unrelated.ts"
@@ -265,7 +361,7 @@ class IncidentWorkerTests(unittest.TestCase):
                 [], {}, expired=[("incident-expired", None)],
                 exclusive=[("segment-exclusive", "unrelated.ts", "camera-demo")],
             )
-            settings = SimpleNamespace(cameras_root=root / "media" / "cameras", incidents_root=root / "media" / "incidents")
+            settings = _settings(root)
             with patch.object(worker_module, "SERVER_ROOT", root), patch.object(worker_module, "settings", settings):
                 with self.assertLogs(level="ERROR") as logs:
                     IncidentWorker(database=database, processor=_Processor()).run_once()
@@ -288,7 +384,7 @@ class IncidentWorkerTests(unittest.TestCase):
                 expired=[("incident-bad", "unrelated.mp4"), ("incident-good", "media/incidents/incident-good/clip.mp4")],
             )
             processor = _Processor()
-            settings = SimpleNamespace(cameras_root=root / "media" / "cameras", incidents_root=root / "media" / "incidents")
+            settings = _settings(root)
             with patch.object(worker_module, "SERVER_ROOT", root), patch.object(worker_module, "settings", settings):
                 with self.assertLogs(level="ERROR") as logs:
                     submitted = IncidentWorker(database=database, processor=processor).run_once()
@@ -341,7 +437,7 @@ class IncidentWorkerTests(unittest.TestCase):
                 exclusive=[("segment-one", "media/cameras/camera-demo/segment.ts", "camera-demo")],
                 fail_commit_for="incident-expired",
             )
-            settings = SimpleNamespace(cameras_root=root / "media" / "cameras", incidents_root=root / "media" / "incidents")
+            settings = _settings(root)
             with patch.object(worker_module, "SERVER_ROOT", root), patch.object(worker_module, "settings", settings):
                 with self.assertLogs(level="ERROR") as logs:
                     IncidentWorker(database=database, processor=_Processor()).run_once()
@@ -359,10 +455,7 @@ class IncidentWorkerTests(unittest.TestCase):
             database = _FakeDatabase(
                 [], {}, expired=[("incident-expired", "media/incidents/incident-expired/clip.mp4")],
             )
-            settings = SimpleNamespace(
-                cameras_root=root / "media" / "cameras",
-                incidents_root=root / "media" / "incidents",
-            )
+            settings = _settings(root)
             worker = IncidentWorker(database=database, processor=_Processor())
             with patch.object(worker_module, "SERVER_ROOT", root), patch.object(worker_module, "settings", settings):
                 with patch.object(Path, "unlink", side_effect=OSError("temporary disk failure")):
@@ -388,10 +481,7 @@ class IncidentWorkerTests(unittest.TestCase):
                 exclusive=[("segment-one", "media/cameras/camera-demo/segment.ts", "camera-demo")],
                 delete_segment_returns=False,
             )
-            settings = SimpleNamespace(
-                cameras_root=root / "media" / "cameras",
-                incidents_root=root / "media" / "incidents",
-            )
+            settings = _settings(root)
             with patch.object(worker_module, "SERVER_ROOT", root), patch.object(worker_module, "settings", settings):
                 IncidentWorker(database=database, processor=_Processor()).run_once()
 
@@ -409,7 +499,7 @@ class IncidentWorkerTests(unittest.TestCase):
                 shared=["segment-newly-shared"],
                 newly_shared=["segment-newly-shared"],
             )
-            settings = SimpleNamespace(cameras_root=root / "media" / "cameras", incidents_root=root / "media" / "incidents")
+            settings = _settings(root)
             with patch.object(worker_module, "SERVER_ROOT", root), patch.object(worker_module, "settings", settings):
                 IncidentWorker(database=database, processor=_Processor()).run_once()
 
@@ -456,10 +546,7 @@ class IncidentWorkerTests(unittest.TestCase):
             segment_file = camera / "shared.ts"
             segment_file.write_bytes(b"video")
             database = SharedExpiryDatabase()
-            settings = SimpleNamespace(
-                cameras_root=root / "media" / "cameras",
-                incidents_root=root / "media" / "incidents",
-            )
+            settings = _settings(root)
             with patch.object(worker_module, "SERVER_ROOT", root), patch.object(worker_module, "settings", settings):
                 IncidentWorker(database=database, processor=_Processor()).run_once()
 
