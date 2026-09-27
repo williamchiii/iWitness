@@ -4,8 +4,9 @@ import { api } from '../lib/api'
 import type { Incident, Playback } from '../lib/api/types'
 import { cameraNumber, cameraPlaces } from '../lib/cameras'
 import { downloadClip } from '../lib/clips'
-import { formatClock, formatClockRange, formatDay, formatDuration } from '../lib/format'
+import { formatClock, formatClockRange, formatDay, formatDuration, formatTimeLeft } from '../lib/format'
 import { POPUP_BACKDROP, POPUP_BACKDROP_OUT, POPUP_PANEL, POPUP_PANEL_OUT } from '../lib/styles'
+import { useNow } from '../lib/useNow'
 import { usePopupExit } from '../lib/usePopupExit'
 import { DownloadIcon, TrashIcon } from './ClipIcons'
 import ClipPlayer from './ClipPlayer'
@@ -17,6 +18,8 @@ interface Props {
   // The clip is gone from the account (deleted here, or already missing).
   onDeleted: (incident: Incident) => void
 }
+
+const DAY_MS = 24 * 60 * 60 * 1000
 
 function sourceLabel(incident: Incident) {
   return incident.source_type === 'replay' ? 'Replayed recording' : 'Live camera'
@@ -48,6 +51,7 @@ export default function ClipModal({ incident, onClose, onDeleted }: Props) {
     [close, onDeleted],
   )
   const camera = cameraPlaces.find((c) => c.id === incident.camera_id)
+  const now = useNow(60_000)
 
   useEffect(() => {
     let current = true
@@ -90,6 +94,7 @@ export default function ClipModal({ incident, onClose, onDeleted }: Props) {
   const start = Date.parse(incident.actual_start!)
   const end = Date.parse(incident.actual_end!)
   const trigger = Date.parse(incident.trigger_at)
+  const deletesAt = incident.deletes_at ? Date.parse(incident.deletes_at) : null
 
   return createPortal(
     <div
@@ -180,6 +185,14 @@ export default function ClipModal({ incident, onClose, onDeleted }: Props) {
             <dt className="text-muted">Source</dt>
             <dd className="mt-0.5">{sourceLabel(incident)}</dd>
           </div>
+          {deletesAt !== null && (
+            <div>
+              <dt className="text-muted">Deleted automatically</dt>
+              <dd className={`mt-0.5 tabular-nums ${deletesAt - now < DAY_MS ? 'text-rec' : ''}`}>
+                {formatDay(deletesAt)} ({deletesAt > now ? `in ${formatTimeLeft(deletesAt - now)}` : 'soon'})
+              </dd>
+            </div>
+          )}
         </dl>
 
         <p className="mt-5 px-6 text-xs text-muted">
