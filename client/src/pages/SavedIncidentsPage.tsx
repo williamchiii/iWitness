@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { DownloadIcon, TrashIcon } from '../components/ClipIcons'
+import { CancelIcon, DownloadIcon, TrashIcon } from '../components/ClipIcons'
 import ClipModal from '../components/ClipModal'
 import DeleteClipDialog from '../components/DeleteClipDialog'
 import Header from '../components/Header'
@@ -81,6 +81,8 @@ function IncidentCard({
   const ready = incident.processing_state === 'ready'
   // A failed clip can't be opened, so the card is the only place to delete it.
   const deletable = ready || incident.processing_state === 'failed'
+  // A recording that never finishes (say the camera stopped) can be cancelled.
+  const cancellable = incident.processing_state === 'recording'
   const [downloading, setDownloading] = useState(false)
   const [downloadError, setDownloadError] = useState<string | null>(null)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
@@ -147,7 +149,7 @@ function IncidentCard({
         {downloadError && <p className="mt-2 text-sm text-rec">{downloadError}</p>}
       </div>
       {/* Stacked beside the details, centered like the thumbnail. */}
-      {deletable && (
+      {(deletable || cancellable) && (
         <div className="relative z-20 flex gap-2 px-1 sm:w-36 sm:shrink-0 sm:flex-col sm:self-center sm:px-0">
           {ready && (
             <button
@@ -165,8 +167,8 @@ function IncidentCard({
             onClick={() => setConfirmingDelete(true)}
             className={`${CARD_ACTION} hover:border-rec/40 hover:text-rec`}
           >
-            <TrashIcon />
-            Delete
+            {cancellable ? <CancelIcon /> : <TrashIcon />}
+            {cancellable ? 'Cancel' : 'Delete'}
           </button>
         </div>
       )}
@@ -278,7 +280,7 @@ export default function SavedIncidentsPage() {
       setToast({
         id: Date.now(),
         tone: 'success',
-        title: 'Clip deleted',
+        title: incident.processing_state === 'recording' ? 'Recording cancelled' : 'Clip deleted',
         body: `${incident.camera_name}, saved at ${formatClock(Date.parse(incident.trigger_at))}.`,
       }),
     [],
