@@ -1,10 +1,11 @@
 """Pydantic models for incident capture responses."""
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Literal
 
 from pydantic import BaseModel
 
+from .config import settings
 from .schemas import SourceType
 
 
@@ -43,3 +44,16 @@ class IncidentResponse(BaseModel):
     error: str | None
     # Signed link to a still from the clip; set only for the owner, once ready.
     thumbnail_url: str | None = None
+    # When a saved clip is deleted automatically; null unless claimed.
+    deletes_at: datetime | None = None
+
+
+def saved_clip_deletes_at(claim_state: str, trigger_at: datetime) -> datetime | None:
+    """When the incident worker deletes a saved clip, counted from the press.
+
+    Only claimed incidents are saved. Unclaimed ones use ``expires_at``.
+    """
+
+    if claim_state != "claimed":
+        return None
+    return trigger_at + timedelta(seconds=settings.saved_clip_seconds)
