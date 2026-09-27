@@ -14,11 +14,24 @@ interface Props {
   error: string | null
   onConfirm: () => void
   onCancel: () => void
+  // The button that backs out, when "Cancel" would be confusing.
+  cancelLabel?: string
 }
 
 // A small "are you sure" box for actions that can't be undone, styled like the
 // sign-in box. Rendered on document.body so it sits above whatever opened it.
-export default function ConfirmDialog({ title, body, confirmLabel, busyLabel, busy, closing, error, onConfirm, onCancel }: Props) {
+export default function ConfirmDialog({
+  title,
+  body,
+  confirmLabel,
+  busyLabel,
+  busy,
+  closing,
+  error,
+  onConfirm,
+  onCancel,
+  cancelLabel = 'Cancel',
+}: Props) {
   // Capture phase, so Esc closes only this box and not the popup under it.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -73,7 +86,7 @@ export default function ConfirmDialog({ title, body, confirmLabel, busyLabel, bu
           disabled={busy}
           className="mt-3 w-full py-2 text-sm text-muted hover:text-ink disabled:opacity-40"
         >
-          Cancel
+          {cancelLabel}
         </button>
       </div>
     </div>,

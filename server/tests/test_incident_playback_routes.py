@@ -207,6 +207,21 @@ class IncidentPlaybackRouteTests(unittest.TestCase):
             )
         self.assertEqual(raised.exception.status_code, 404)
 
+    def test_delete_cancels_a_clip_still_recording(self) -> None:
+        # No clip file yet: the row goes and its preserved segments are released.
+        database = _Database((None, "recording"))
+        response = routes.delete_incident(
+            INCIDENT_ID,
+            _principal(),
+            connection=database.connection,
+            settings=routes.get_settings(),
+        )
+        self.assertEqual(response.status_code, 204)
+        statements = database.connection.statements
+        self.assertTrue(any(s.startswith("delete from incident_segment") for s in statements))
+        self.assertTrue(any(s.startswith("update segment") for s in statements))
+        self.assertTrue(any(s.startswith("delete from incident where") for s in statements))
+
     def test_delete_rejects_clip_while_assembling(self) -> None:
         database = _Database((None, "assembling"))
         with self.assertRaises(HTTPException) as raised:
